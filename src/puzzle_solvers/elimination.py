@@ -26,17 +26,27 @@
 # Version: 28 May 2019: Initial Coding
 
 """
-Process-of-elimination puzzles are implemented in the
+Process-of-elimination puzzles, sometimes known as zebra puzzles, or
+just logic puzzles, are implemented in the
 :py:mod:`puzzle_solvers.elimination` module. These puzzles generally
 take the form of a number of different categories of items that must be
 matched uniquely against each other based on rules that direct the
 elimination of possibilities. An example of such a puzzle is found in
 the corresponding :ref:`elimination-tutorial` section.
+
+The original "zebra puzzle" is a particular instance of this type of
+puzzle that originated in the December 17, 1962 issue of
+*Life Interational*. This particular formulation is ascribed to Albert
+Enistein, and sometimes to Lewis Carroll. A solution to this puzzle can
+be found among the :ref:`setup-demos` at
+`puzzle_solvers.demos.elimination_zebra`.
 """
 
 from collections import deque
 from collections.abc import Mapping
-from itertools import combinations, cycle
+from itertools import chain, combinations, cycle
+from math import copysign
+import re
 from types import MappingProxyType
 
 try:
@@ -59,10 +69,10 @@ class Solver:
     level. High level operations accept item labels or (category, item)
     tuples as inputs. They make it easy to implement the elimination
     rules of the puzzle. Low level methods accept matrix coordinates in
-    the range :math:`[0, M * N)`. :py:meth:`match` and :py:meth:`unlink`
-    are high level methods. Low level methods support the logic of
-    high level methods. :py:meth:`implications` and
-    :py:meth:`find_matches` are low level methods.
+    the range :math:`[0, M * N)`. :py:meth:`match` and
+    :py:meth:`unmatch` are examples of high-level methods. Low-level
+    methods support the logic of high level methods. :py:meth:`unlink`
+    and :py:meth:`find_matches` are low level methods.
 
     Positions used by the low level methods can be converted to an
     index within :py:attr:`categories` and an index within that category
@@ -72,7 +82,8 @@ class Solver:
     """
     def __init__(self, problem, categories=None, debug=False):
         """
-        Create a solver for a particular elimination problem.
+        Create a solver for a particular incarnation of the zebta
+        puzzle.
 
         The problem can be specified as either a mapping of category
         labels to iterables of items or an iterable of iterables. In the
@@ -92,6 +103,8 @@ class Solver:
         tuple). Item labels that are repeated between categories must
         always be supplied as a two-element (category, item) tuple.
 
+        No item or category labels may be `None`.
+
         Parameters
         -----------
         problem :
@@ -109,7 +122,8 @@ class Solver:
             A flag indicating whether or not detailed messages should be
             printed by all the methods.
         """
-        self._debug = debug
+        # Having an integer is important because it controls indentation
+        self._debug = bool(debug)
 
         # Check the input data, make a category list and a list of iterables
         # Set categories, normalize problem data
@@ -136,6 +150,9 @@ class Solver:
             if len(set(self.categories)) != len(self.categories):
                 raise ValueError('Categories must be unique')
 
+        if None in self.categories:
+            raise ValueError('None may not be a category label')
+
         # Compute basic properties (m, n, labels)
         self.__dict__['m'] = len(self.categories)
         self.__dict__['n'] = None
@@ -157,6 +174,9 @@ class Solver:
 
         self.__dict__['labels'] = tuple(labels)
 
+        if None in self.labels:
+            raise ValueError('None may not be an item label')
+
         # Compute mapping of unique labels
         mapping = {}
         for index, label in enumerate(labels):
@@ -169,18 +189,20 @@ class Solver:
 
         # Create adjacency matrix
         self.__dict__['matrix'] = np.empty((len(labels),) * 2, dtype=np.bool)
-        if self._debug:
+        if debug:
             print(f'New solver with {self.m} categories, {self.n} items')
-            print(f'Matrix is {self.matrix.shape[0]}x{self.matrix.shape[1]}')
-            print(f'Items:')
+            print(f'Matrix is {"x".join(str(s) for s in self.matrix.shape)}')
+            print('Items: (ambiguous entries marked with an asterisk)')
             for i, label in enumerate(self.labels):
                 if i % self.n == 0:
-                    print(f'    {self.categories[i // self.n]!r}')
-                print(
-                    f'        {label!r} '
-                    f'({"Ambigous" if self.map[label] is None else "Unique"})'
-                )
+                    print(f'    Category = {self.categories[i // self.n]!r}')
+                print(f'      {"*" if self.map[label] is None else " "} '
+                      f'{label!r}')
             print()
+
+        # Create assertions
+        self.__dict__['assertions'] = {}
+
         self.reset()
 
     @property
@@ -215,6 +237,32 @@ class Solver:
            likely to result in an infinite loop.
         """
         return self.__dict__['matrix']
+
+    @property
+    def assertions(self):
+        """
+        A mapping of (position, category IDs) pairs to
+        :py:class:`Assertion`\ s.
+
+        This mapping is mutable. It is checked whenever an edge is
+        removed. Assertions should be added via methods like
+        :py:meth:`greater_than` and :py:meth:`adjacent_to`. Removal
+        should be automatic when they are
+        :py:attr:`~Assertion.satisfied`, via the
+        :py:meth:`remove_assertion` method.
+
+        Each assertion object appears under two keys in the mapping: one
+        for each of the items that it links together. Assertions are
+        stored in a list under each key.
+        """
+        return self.__dict__['assertions']
+
+    @property
+    def assertion_count(self):
+        """
+        The number of active :py:attr:`assertions`.
+        """
+        return sum(map(len, self.assertions.values())) // 2
 
     @property
     def categories(self):
@@ -268,18 +316,16 @@ class Solver:
         """
         Resets the solver to its initial state.
 
-        This method regenerates the adjacency matrix.
+        This method regenerates the adjacency matrix and removes all
+        assertions.
         """
         self.matrix.fill(True)
-        cat = 0
-        while cat < self.n * self.m:
-            next = cat + self.n
-            self.matrix[cat:next, cat:next] = False
-            cat = next
+        for cat in range(len(self.categories)):
+            s = self.cat_slice(cat)
+            self.matrix[s, s] = False
         np.fill_diagonal(self.matrix, True)
-        if self._debug:
-            print(f'Reset matrix with {self.edges} edges')
-            print()
+        self.assertions.clear()
+        self._log(f'Reset matrix with {self.edges} edges\n')
 
     def draw(self, show=True, title=None):
         """
@@ -432,63 +478,41 @@ class Solver:
             The total number of links removed. Zero if the items already
             satisfy the match.
         """
+        self._indent()
+
         pos1, cat1 = self.item_to_pos(item1)
         pos2, cat2 = self.item_to_pos(item2)
 
+        mask = self.cat_mask(cat2)
+        mask[pos2] = False
+
         if items:
-            poss, cats = zip(*map(self.item_to_pos, items))
-            if len(set(cats)) > 1 or cats[0] != cat2:
-                raise ValueError('Item2 categories do not match')
-            poss = set(poss)
-            poss.add(pos2)
-        else:
-            poss = set([pos2])
+            for pos, cat in map(self.item_to_pos, items):
+                if cat != cat2:
+                    raise ValueError('Item2 categories do not match')
+                mask[pos] = False
 
         if cat1 == cat2:
-            if len(poss) > 1 or pos1 != pos2:
+            if mask.sum() < self.n - 1 or pos1 != pos2:
                 raise ValueError('Can not link items in the same category')
+            self._log('Matching {0:P:I} against itself: no-op',
+                      pos1, start=True)
             return 0
 
-        if self._debug:
-            print(
-                f'Matching {self.pos_to_item(pos1, cat1)} with '
-                f'({self.categories[cat2]!r}, ',
-                end='' if len(poss) == 1 else '{ '
-            )
-            for pos in poss:
-                print(f'{self.labels[pos]!r}',
-                      end='' if len(poss) == 1 else ', ')
-            if len(poss) > 1:
-                print('}', end='')
-            print(')')
+        cm = self.cat_mask(cat2)
+        self._log('Matching {0:P:I} with {1:N:C}: {2:M:L}',
+                  pos1, cat2, mask ^ cm, start=True)
 
-        links = self.linked_set(pos1, cat2)
-        unlink = links - poss
+        unlink = self.matrix[pos1] & mask
 
-        if self._debug:
-            print(f'    {self.pos_to_item(pos1, cat1)} has {len(links)} links '
-                  f'to {self.categories[cat2]!r} remaining')
+        self._log('{0:L:I} has {0:L:X} links to {0:L:C} remaining\n',
+                  (pos1, cat2), cont=True)
 
-        if unlink:
-            if self._debug:
-                print(f'    Unlinking {len(unlink)} edges:')
+        count = self._implications(pos1, cat2, unlink)
+        self._dedent()
+        return count
 
-            stack = [(pos1, cat2)]
-            for p in unlink:
-                self._set_link(pos1, p, False)
-                stack.append((p, cat1))
-                if self._debug:
-                    print(f'        {self.pos_to_item(pos1, cat1)} != '
-                          f'{self.pos_to_item(p, cat2)}')
-            return len(unlink) + self.implications(stack)
-
-        if self._debug:
-            print('    Nothing to unlink!')
-            print()
-
-        return 0
-
-    def unlink(self, item1, item2):
+    def unmatch(self, item1, item2):
         """
         Set two items to be definitely not associated.
 
@@ -500,42 +524,316 @@ class Solver:
         the labels are tuples. The category will be determined
         automatically in the former case.
 
-        Unlinking already unlinked items is a no-op. Unlinking an item
-        from itself is an error. The updated relationships are pruned
-        recursively according to the description in the he
+        Unmatching already unmatched items is a no-op. Unmatching an
+        item from itself is an error. The updated relationships are
+        pruned recursively according to the description in the he
         :ref:`elimination-logic` section.
 
         Parameters
         -----------
         item1 :
-            An item to unlink.
+            An item to unmatch.
         item2 :
-            The item to unlink it from.
+            The item to unmatch it from.
 
         Return
         ------
         count : int
-            The number of links removed. Zero if the items are
-            already unlinked.
+            The number of edges removed. Zero if the items are
+            already unmatched.
         """
+        self._indent()
+
         pos1, cat1 = self.item_to_pos(item1)
         pos2, cat2 = self.item_to_pos(item2)
 
-        if pos1 == pos2:
-            raise ValueError('Please do not unlink an item from itself')
+        self._log('Unmatching {0:P:I} from {1:P:I}', pos1, pos2, start=True)
+        count = self.unlink(pos1, pos2)
 
-        if self._debug:
-            print(f'Unlinking {self.pos_to_item(pos1, cat1)} from '
-                  f'{self.pos_to_item(pos2, cat2)}')
+        self._dedent()
+        return count
 
-        if self.matrix[pos1, pos2]:
-            self._set_link(pos1, pos2, False)
-            return 1 + self.implications([(pos1, cat2), (pos2, cat1)])
+    def less_than(self, item1, item2, category, *bounds):
+        """
+        .. py:function:: less_than(item1, item2, category[, exact])
+        .. py:function:: less_than(item1, item2, category[, lower, upper])
 
-        if self._debug:
-            print('    Noting to do, already unlinked!')
-            print()
-        return 0
+        Assert that the item in `category` linked to `item1` is less
+        than the one linked to `item2`.
+
+        The items may or may not be in the same category, but at least
+        one of their categories must differ from `category`. All the
+        item labels in `category` must be comparable in a way that makes
+        sense, which usually means that they are numbers.
+
+        `item1` and `item2` may be either a label or a two-element
+        (category, label) tuple. The latter is required if a label is
+        ambiguous is a tuple. The category will be determined
+        automatically in the former case.
+
+        First, `item1` and `item2` will be :py:meth:`unmatch`\ ed.
+        After that, any possibilities that contradict the assertion at
+        the time of invocation are removed. If the assertion is not
+        fully satisfied, a listener in the shape of an
+        :py:class:`Assertion` is set up to continue monitoring for
+        additional link removals. The :py:class:`Assertion` removes
+        itself as soon as it is satisfied.
+
+        The exact type of assertion depends on the bounds that are
+        specified:
+
+        No bounds :
+            :py:class:`BoundedExclusiveAssertion`
+        Single, `exact` bound :
+            :py:class:`OffsetAssertion`
+        Two Bounds, `upper` and `lower` :
+            :py:class:`BoundedAssertion`
+
+        Parameters
+        ----------
+        item1 :
+            The lesser item to compare.
+        item2 :
+            The greater item to compare.
+        category :
+            The category in which to make the comparison.
+        bounds :
+            Optional bounds for the difference being asserted. If one
+            bound is provided, it is an exact match: `item1` is exactly
+            `*bounds` less than `item2`. If two bounds are provided,
+            they are the inclusive limits for the difference. A bound of
+            `None` indicates unbounded (only allowed for the `upper`
+            bound).
+
+        Return
+        ------
+        count : int
+            The total number of links removed. Zero if the items already
+            satisfy the assertion. Any further removals are made in
+            response to additional explicit rules being added to the
+            solver.
+
+        Notes
+        -----
+        If `bounds` are specified, either as an exact match or a range,
+        the labels in `category` must support subtraction (``-``
+        operator) as well as the ``<`` operator in a meaningful manner.
+        Normally, this method will be used for numbers, so the
+        restriction is fairly straightforward.
+        """
+        self._indent()
+
+        self._log('Asserting {0:C:C} for {1:I:I} < {2:I:I}',
+                  category, item1, item2, start=True)
+
+        count = self.unmatch(item1, item2)
+
+        nargs = len(bounds)
+        if nargs == 0:
+            assertion = BoundedExclusiveAssertion(self, item1, item2,
+                                                  category, 0, None)
+        elif nargs == 1:
+            assertion = OffsetAssertion(self, item1, item2,
+                                        category, bounds[0])
+        elif nargs == 2:
+            assertion = BoundedAssertion(self, item1, item2,
+                                         category, *bounds)
+        else:
+            raise TypeError(f'comparison accepts 0, 1 or 2 bounds '
+                            '({nargs} given)')
+
+        count += assertion.verify()
+        self._indent()
+        if not assertion.satisfied:
+            self._log('Assertion not fully satisfied: adding')
+            self.register_assertion(assertion)
+        else:
+            self._log('Assertion fully satisfied: not adding')
+
+        self._dedent()
+        self._dedent()
+
+        return count
+
+    def greater_than(self, item1, item2, category, *bounds):
+        """
+        .. py:function:: greater_than(item1, item2, category[, exact])
+        .. py:function:: greater_than(item1, item2, category[, lower, upper])
+
+        Assert that the item in `category` linked to `item1` is greater
+        than the one linked to `item2`.
+
+        The items may or may not be in the same category, but at least
+        one of their categories must differ from `category`. All the
+        item labels in `category` must be comparable in a way that makes
+        sense, which usually means that they are numbers.
+
+        `item1` and `item2` may be either a label or a two-element
+        (category, label) tuple. The latter is required if a label is
+        ambiguous is a tuple. The category will be determined
+        automatically in the former case.
+
+        First, `item1` and `item2` will be :py:meth:`unmatch`\ ed.
+        After that, any possibilities that contradict the assertion at
+        the time of invocation are removed. If the assertion is not
+        fully satisfied, a listener in the shape of an
+        :py:class:`Assertion` is set up to continue monitoring for
+        additional link removals. The :py:class:`Assertion` removes
+        itself as soon as it is satisfied.
+
+        The exact type of assertion depends on the bounds that are
+        specified:
+
+        No bounds :
+            :py:class:`BoundedExclusiveAssertion`
+        Single, `exact` bound :
+            :py:class:`OffsetAssertion`
+        Two Bounds, `upper` and `lower` :
+            :py:class:`BoundedAssertion`
+
+        Parameters
+        ----------
+        item1 :
+            The greater item to compare.
+        item2 :
+            The lesser item to compare.
+        category :
+            The category in which to make the comparison.
+        bounds :
+            Optional bounds for the difference being asserted. If one
+            bound is provided, it is an exact match: `item1` is exactly
+            `*bounds` less than `item2`. If two bounds are provided,
+            they are the inclusive limits for the difference. A bound of
+            `None` indicates unbounded (only allowed for the `upper`
+            bound).
+
+        Return
+        ------
+        count : int
+            The total number of links removed. Zero if the items already
+            satisfy the assertion. Any further removals are made in
+            response to additional explicit rules being added to the
+            solver.
+
+        Notes
+        -----
+        If `bounds` are specified, either as an exact match or a range,
+        the labels in `category` must support subtraction (``-``
+        operator) as well as the ``<`` operator in a meaningful manner.
+        Normally, this method will be used for numbers, so the
+        restriction is fairly straightforward.
+
+        This method is a convenience wrapper for ::
+
+            solver.less_than(item2, item1, category, *bounds)
+
+        This is generally not a problem, unless you happen to have
+        labels in `category` whose comparison operations do not reflect
+        properly.
+        """
+        return self.less_than(item2, item1, category, *bounds)
+
+    def adjacent_to(self, item1, item2, category, *bounds):
+        """
+        .. py:function:: adjacent_to(item1, item2, category[, exact=1])
+        .. py:function:: adjacent_to(item1, item2, category[, lower, upper])
+
+        Assert that the item in `category` linked to `item1` is within
+        some bounds on either side of the one linked to `item2`.
+
+        The items may or may not be in the same category, but at least
+        one of their categories must differ from `category`. All the
+        item labels in `category` must be comparable in a way that makes
+        sense, which usually means that they are numbers.
+
+        `item1` and `item2` may be either a label or a two-element
+        (category, label) tuple. The latter is required if a label is
+        ambiguous is a tuple. The category will be determined
+        automatically in the former case.
+
+        First, `item1` and `item2` will be :py:meth:`unmatch`\ ed.
+        After that, any possibilities that contradict the assertion at
+        the time of invocation are removed. If the assertion is not
+        fully satisfied, a listener in the shape of an
+        :py:class:`Assertion` is set up to continue monitoring for
+        additional link removals. The :py:class:`Assertion` removes
+        itself as soon as it is satisfied.
+
+        The exact type of assertion depends on the bounds that are
+        specified:
+
+        No bounds :
+            :py:class:`AdjacencyOffsetAssertion`
+        Single, `exact` bound :
+            :py:class:`AdjacencyOffsetAssertion`
+        Two Bounds, `upper` and `lower` :
+            :py:class:`BoundedAssertion`
+
+        Parameters
+        ----------
+        item1 :
+            The lesser item to compare.
+        item2 :
+            The greater item to compare.
+        category :
+            The category in which to make the comparison.
+        bounds :
+            Optional bounds for the difference being asserted. If one
+            bound is provided, it is an exact match: `item1` is exactly
+            `*bounds` less than `item2`. If two bounds are provided,
+            they are the inclusive limits for the difference. A bound of
+            `None` indicates unbounded (only allowed for the `upper`
+            bound).
+
+        Return
+        ------
+        count : int
+            The total number of links removed. Zero if the items already
+            satisfy the assertion. Any further removals are made in
+            response to additional explicit rules being added to the
+            solver.
+
+        Notes
+        -----
+        If `bounds` are specified, either as an exact match or a range,
+        the labels in `category` must support subtraction (``-``
+        operator) as well as the ``<`` operator in a meaningful manner.
+        Normally, this method will be used for numbers, so the
+        restriction is fairly straightforward.
+        """
+        self._indent()
+
+        self._log('Asserting {0:C:C} for {1:I:I} ~ {2:I:I}',
+                  category, item1, item2, start=True)
+
+        count = self.unmatch(item1, item2)
+
+        nargs = len(bounds)
+        if nargs == 0:
+            assertion = AdjacencyOffsetAssertion(self, item1, item2,
+                                                 category, 1)
+        elif nargs == 1:
+            assertion = AdjacencyOffsetAssertion(self, item1, item2,
+                                                 category, bounds[0])
+        elif nargs == 2:
+            assertion = BandedAssertion(self, item1, item2,
+                                        category, *bounds)
+        else:
+            raise TypeError(f'adjacency accepts 0, 1 or 2 bounds '
+                            '({nargs} given)')
+
+        count += assertion.verify()
+        self._indent()
+        if not assertion.satisfied:
+            self._log('Assertion not fully satisfied: adding')
+            self.register_assertion(assertion)
+        else:
+            self._log('Assertion fully satisfied: not adding')
+
+        self._dedent()
+        self._dedent()
+
+        return count
 
     def category_for(self, item, category):
         """
@@ -564,8 +862,8 @@ class Solver:
         pos1, cat1 = self.item_to_pos(item)
         cat2 = self.categories.index(category)
         links = self.linked_set(pos1, cat2)
-        if len(links) == 1:
-            return self.labels[links.pop()]
+        if links.size == 1:
+            return self.labels[links[0]]
         return None
 
     def available_for(self, item, category):
@@ -594,185 +892,6 @@ class Solver:
         links = self.linked_set(pos1, cat2)
         return tuple(self.labels[p] for p in links)
 
-    def less_than(self, item1, item2, category, *bounds):
-        """
-        less_than(item1, item2, category[, exact=None])
-        less_than(item1, item2, category[, lower, upper])
-
-        Assert that the item in `category` linked to `item1` is less
-        then the one linked to `item2`.
-
-        First, `item1` and `item2` will be :py:meth:`unlink`\ ed. After
-        that, any possibilities that contradict the assertion at the
-        time of invocation are removed. This method may need to be
-        called multiple times as more data becomes available, as the
-        solver does not record assertions yet. The assertion is applied
-        in a loop, which runs as long as edges are being removed.
-
-        The items may or may not be in the same category, but at least
-        one of their categories must differ from `category`. All the
-        items in `category` must be comparable in a way that makes
-        sense.
-
-        `item1` and `item2` may be either a label or a two-element
-        (category, label) tuple. The latter is required if a label is
-        ambiguous is a tuple. The category will be determined
-        automatically in the former case.
-
-        Parameters
-        ----------
-        item1 :
-            The lesser item to compare.
-        item2 :
-            The greater item to compare.
-        category :
-            The category in which to make the comparison.
-        bounds :
-            Optional bounds for the assertion. If one bound is provided,
-            it is an exact match: `item1` is exactly `*bounds` less than
-            `item2`. If two bounds are provided, they are the inclusive
-            limits for the difference. A bound of `None` indicates
-            unbounded (only allowed for the upper bound).
-
-        Return
-        ------
-        count : int
-            The total number of links removed. Zero if the items already
-            satisfy the assertion.
-
-        Notes
-        -----
-        If `bounds` are specified, either as an exact match or a range,
-        the labels in `category` must support subtraction (``-``
-        operator) as well as the ``<`` operator in a meaningful manner.
-        Normally, this method will be used for numbers, so the
-        restriction is fairly straightforward.
-        """
-        count = self.unlink(item1, item2)
-
-        if self._debug:
-            item1 = self.pos_to_item(*self.item_to_pos(item1))
-            item2 = self.pos_to_item(*self.item_to_pos(item2))
-            print(f'Asserting {category!r} of {item1} < {item2}')
-
-        nargs = len(bounds)
-        if nargs == 0:
-            key = lambda x1, x2: x1 < x2
-            if self._debug:
-                print(f'    Unbounded comparison of {category!r}')
-        elif nargs == 1:
-            exact = bounds[0]
-            key = lambda x1, x2: x2 - x1 == exact
-            if self._debug:
-                print(f'    Difference in {category!r} == {exact!r}')
-        elif nargs == 2:
-            lower, upper = bounds
-            if upper is None:
-                key = lambda x1, x2: x2 - x1 >= lower
-                if self._debug:
-                    print(f'    Difference in {category!r} >= {lower!r}')
-            else:
-                key = lambda x1, x2: lower <= x2 - x1 <= upper
-                if self._debug:
-                    print(f'    {upper!r} >= Difference in '
-                          f'{category!r} >= {lower!r}')
-        else:
-            raise TypeError(f'comparison accepts 0, 1 or 2 bounds '
-                            '({nargs} given)')
-
-        options1 = self.available_for(item1, category)
-        options2 = self.available_for(item2, category)
-
-        if self._debug:
-            print(f'    Options for {item1}: {{ {", ".join(map(repr, options1))} }}')
-            print(f'    Options for {item2}: {{ {", ".join(map(repr, options2))} }}')
-
-        prev = count - 1
-        while prev != count:
-            prev = count
-
-            valid1 = []
-            for i1 in options1:
-                test = (i for i in (key(i1, i2) for i2 in options2) if i)
-                if next(test, None) is None:
-                    count += self.unlink(item1, i1)
-                else:
-                    valid1.append(i1)
-    
-            valid2 = []
-            for i2 in options2:
-                test = (i for i in (key(i1, i2) for i1 in options1) if i)
-                if next(test, None) is None:
-                    count += self.unlink(item2, i2)
-                else:
-                    valid2.append(i2)
-
-        return count
-
-    def greater_than(self, item1, item2, category, *bounds):
-        """
-        greater_than(item1, item2, category[, exact=None])
-        greater_than(item1, item2, category[, lower, upper])
-
-        Assert that the item in `category` linked to `item1` is greater
-        then the one linked to `item2`.
-
-        First, `item1` and `item2` will be :py:meth:`unlink`\ ed. After
-        that, any possibilities that contradict the assertion at the
-        time of invocation are removed. This method may need to be
-        called multiple times as more data becomes available, as the
-        solver does not record assertions yet. The assertion is applied
-        in a loop, which runs as long as edges are being removed.
-
-        The items may or may not be in the same category, but at least
-        one of their categories must differ from `category`. All the
-        items in `category` must be comparable in a way that makes
-        sense.
-
-        `item1` and `item2` may be either a label or a two-element
-        (category, label) tuple. The latter is required if a label is
-        ambiguous is a tuple. The category will be determined
-        automatically in the former case.
-
-        Parameters
-        ----------
-        item1 :
-            The greater item to compare.
-        item2 :
-            The lesser item to compare.
-        category :
-            The category in which to make the comparison.
-        bounds :
-            Optional bounds for the assertion. If one bound is provided,
-            it is an exact match: `item1` is exactly `*bounds` greater
-            than `item2`. If two bounds are provided, they are the
-            inclusive limits for the difference. A bound of `None`
-            indicates unbounded (only allowed for the upper bound).
-
-        Return
-        ------
-        count : int
-            The total number of links removed. Zero if the items already
-            satisfy the assertion.
-
-        Notes
-        -----
-        If `bounds` are specified, either as an exact match or a range,
-        the labels in `category` must support subtraction (``-``
-        operator) as well as the ``<`` operator in a meaningful manner.
-        Normally, this method will be used for numbers, so the
-        restriction is fairly straightforward.
-
-        This method is a convenience wrapper for ::
-
-            solver.less_than(item2, item1, category, *bounds)
-
-        This is generally not a problem, unless you happen to have
-        labels in `category` whose comparison operations do not reflect
-        properly.
-        """
-        return self.less_than(item2, item1, category, *bounds)
-
     def find_missing(self, category):
         """
         Retrieve a set of all the items in category that do not have
@@ -789,8 +908,7 @@ class Solver:
             A set of item labels in `category` that still require work.
         """
         cat = self.categories.index(category)
-        start = cat * self.n
-        end = start + self.n
+        s = self.cat_slice(cat)
 
         # 1. Take the N rows in the selected category: self.matrix[start:end]
         # 2. Make it so you have (M * N, N) containing the links between each
@@ -802,11 +920,33 @@ class Solver:
         # 4. Reshape into an NxM matrix, where each row corresponds to a row
         #    in the original slice (the selected category) and columns are the
         #    number of links to each other category: ...reshape(self.n, self.m)
-        links = self.matrix[start:end].reshape(-1, self.n).sum(
+        links = self.matrix[s].reshape(-1, self.n).sum(
                                                 axis=1).reshape(self.n, self.m)
         # Select any rows that have any missing mappings.
         mask = (links != 1).any(axis=1)
-        return set(self.labels[x] for x in np.flatnonzero(mask) + start)
+        return set(self.labels[x] for x in np.flatnonzero(mask) + s.start)
+
+    def pos_to_item(self, pos, cat=None):
+        """
+        Convert a matrix position to a (category, label) tuple.
+
+        Parameters
+        ----------
+        pos : int
+            The index of the item in :py:attr:`matrix`.
+        cat : int
+            An optional index of the category in :py:attr:`categories`.
+            If omitted, it is computed as ``pos // n``.
+
+        Return
+        ------
+        item : tuple
+            A two-element (category, label) tuple providing an
+            unambiguous high-level reference to the item.
+        """
+        if cat is None:
+            cat = pos // self.n
+        return self.categories[cat], self.labels[pos]
 
     def item_to_pos(self, item):
         """
@@ -838,27 +978,35 @@ class Solver:
             cat = pos // self.n
         return pos, cat
 
-    def pos_to_item(self, pos, cat=None):
+    def unlink(self, pos1, pos2):
         """
-        Convert a matrix position to a (category, label) tuple.
+        Set two items to be definitely not associated.
+
+        All edges between items associated with either one are updated
+        as well.
+
+        This is the low-level equivalent of :py:meth:`unmatch`: the
+        inputs are matrix positions.
+
+        Unlinking already unlinked items is a no-op. Unlinking an item
+        from itself is an error. The updated relationships are pruned
+        recursively according to the description in the he
+        :ref:`elimination-logic` section.
 
         Parameters
-        ----------
-        pos : int
-            The index of the item in :py:attr:`matrix`.
-        cat : int
-            An optional index of the category in :py:attr:`categories`.
-            If omitted, it is computed as ``pos // n``.
+        -----------
+        pos1 :
+            The matrix position of an item to unmatch.
+        pos2 :
+            The matrix position of the item to unmatch it from.
 
         Return
         ------
-        item : tuple
-            A two-element (category, label) tuple providing an
-            unambiguous high-level reference to the item.
+        count : int
+            The number of edges removed. Zero if the items are
+            already unlinked.
         """
-        if cat is None:
-            cat = pos // self.n
-        return self.categories[cat], self.labels[pos]
+        return self._implications(pos1, pos2 // self.n, self.pos_mask(pos2))
 
     def find_matches(self, pos):
         """
@@ -886,90 +1034,211 @@ class Solver:
         n = np.argmax(row[m, :], axis=1)
         return m * self.n + n
 
-    def implications(self, stack=()):
+    def _implications(self, pos, cat_hint, mask):
         """
-        Follow through with/update the logic of relationships between an
-        items and different categories.
+        Remove links between an item and other items, and follow through
+        with the logical implications of the removal.
 
-        `stack` is an iterable of starting relationships containing
-        (position, category index) pairs. It is used to seed the stack
-        of a recursive process. As edges are removed, additional
-        relationships are verified. See the :ref:`elimination-logic`
-        section for more information.
+        This method handles removals starting with a single node at
+        `pos`. The other endpoints of the edges are given in `mask`.
+        `mask` is an array of bits, where `True` elements correspond to
+        edges that should be removed. The mask must be `False` at `pos`,
+        since a node can not be unlinked from itself. It may contain any
+        number of links that have already been removed.
+
+        In addition to the implications of
+        :ref:`elimination-logic-explicit` rules, this method will check
+        each removed edge against the currently registered assertions.
+
+        See the :ref:`elimination-logic` section for more information.
 
         Parameters
         ----------
-        stack :
-            An iterable contaiing the initial set of (position,
-            category index) pairs to update.
+        pos : int
+            The matrix position of the starting item to unlink from.
+        cat_hint : int or None
+            If known, the category in which all items in `mask` belong
+            to. `None` if unknown. Any bits in `mask` outside this
+            category will be ignored.
+        mask : numpy.ndarray
+            An array of the same length as a row in :py:attr:`matrix`,
+            inidcating the links to remove from `pos`.
 
         Return
         ------
         count : int
             The total number of links removed.
         """
-        def check(keep, pos):
+        self._indent()
+
+        def check(pos, unlink):
             """
-            Check which elements of row ``self.matrix[pos]`` must be
-            removed to reduce the row to `keep`. If any elements are
-            removed, both the forward and backward links are added to the
-            stack for further checkup.
+            Add the `unlink` array to the stack if it has any elements.
             """
-            row = self.matrix[pos]
-            unlink = keep ^ row
-            count = unlink.sum()
-            if count:
-                if self._debug:
-                    stack_count = len(stack)
-                self.matrix[pos, :] = self.matrix[:, pos] = keep
-                unlink = np.flatnonzero(unlink)
-                stack.update((pos, x // self.n) for x in unlink)
-                stack.update((x, pos // self.n) for x in unlink)
-                if self._debug:
-                    stack_count = len(stack) - stack_count
-                    print(f'{count} links removed, {stack_count} items added '
-                          'to stack')
-            elif self._debug:
-                print('Nothing to remove, no change in stack')
-                
+            if unlink.any():
+                self._log('Need to remove {0:M:X} edges from {1:P:I}\n',
+                          unlink, pos, cont=True)
+                stack.append((pos, None, unlink))
+            else:
+                self._log('All links already shared: nothing to remove\n',
+                          cont=True)
+
+        def update_assertions(pos, cat, mask):
+            """
+            Call the :py:meth:`~Assertion.update` methods of any
+            matching :py:class:`Assertion`\ s found in
+            :py:attr:`assertions`.
+    
+            Parameters
+            ----------
+            pos : int
+                One of the potential endpoints of the assertion.
+            cat : int
+                The linking category of the assertion.
+            mask : int or numpy.ndarray
+                Either an integer containing a single value for the
+                second endpoint, or a mask containing flags marking
+                multiple endpoints.
+
+            Return
+            ------
+            count :
+                The number of edges actually removed from the graph as a
+                result of this operation.
+            """
+            key = (pos, cat)
+            mask = np.array(mask, ndmin=1)
+            if mask.dtype.type is np.bool_:
+                mask = np.flatnonzero(mask)
+            count = 0
+            if key in self.assertions:
+                assertions = self.assertions[key]
+                self._log('{0:P:P} assertions for {1:P:I} -> {2:N:C}',
+                          assertions, pos, cat, cont=True)
+                self._indent()
+                for pos2 in mask:
+                    self._log('Updating all for {0:P:I} x {1:P:I}', pos, pos2)
+                    for assertion in assertions:
+                        count += assertion.update(pos, pos2)
+                self._dedent()
+            else:
+                self._log('No assertions for {0:P:I} -> {1:N:C}',
+                          pos, cat, cont=True)
             return count
 
-        # sets are ordered in py > 3.6, which makes this even nicer
-        stack = set(stack)
+        def update(pos, cat, mask):
+            """
+            Update assertions and check implications of recently deleted
+            links.
+
+            This method gets called twice, once for each direction of
+            the link. This means that the assertion check only needs to
+            happen once per call.
+
+            Parameters
+            ----------
+            pos : int
+                The source node
+            cat : int
+                The category to check against
+            mask : numpy.ndarray or int
+                The sink nodes in `cat` that were just removed. If an
+                integer, only one sink node. Otherwise, all bits
+                represent sink nodes.
+
+            Return
+            ------
+            count : int
+                The number of nodes removed by assersions.
+            """
+            self._indent()
+
+            self._log('Updating links based on {0:P:I} -> {1:N:C}', pos, cat)
+
+            count = update_assertions(pos, cat, mask)
+
+            # Select items in `cat` that link to `pos`
+            rows = self.matrix[self.cat_slice(cat), :]
+            selection = rows[:, pos]
+            rows = rows[selection]
+            other = np.logical_or.reduce(rows, axis=0)
+
+            # Find all shared links
+            row = self.matrix[pos]
+            matches = row & other
+
+            # Ensure that `pos` only links to those links
+            check(pos, matches ^ row)
+
+            if len(rows) == 1:
+                pos2 = np.argmax(selection) + cat * self.n
+                self._log('{0:P:I} to {1:P:I} is 1-to-1', pos, pos2)
+                check(pos2, matches ^ other)
+
+            self._dedent()
+            return count
+
+        stack = deque([(pos, cat_hint, mask)])
         count = 0
 
-        if self._debug:
-            print('    Assessing implications with initial stack of '
-                  f'{len(stack)} items')
+        self._log('Assessing implications', start=True)
 
         while stack:
-            pos, cat = stack.pop()
-            p = cat * self.n
-            # select connected rows
-            rows = self.matrix[p:p + self.n, :]
-            connection_mask = rows[:, pos]
-            rows = rows[connection_mask, :]
-            # find connections in rows
-            update = np.logical_or.reduce(rows, axis=0)
-            keep = self.matrix[pos] & update
+            pos1, cat2, mask = stack.pop()
+            cat1 = pos1 // self.n
 
-            if self._debug:
-                print(f'        {self.pos_to_item(pos)} -> '
-                      f'{self.categories[cat]!r} ({len(rows)} links): ',
-                      end='')
+            if mask[pos1]:
+                raise ValueError('Please do not attempt to unlink an item '
+                                 f'from itself: {self.pos_to_item(pos1)}')
 
-            count += check(keep, pos)
-            if len(rows) == 1:
-                # there is a possibility of two way unlinking
-                pos2 = p + np.argmax(connection_mask)
-                if self._debug:
-                    print(f'        [Reverse] {self.pos_to_item(pos2)} -> '
-                          f'{self.categories[pos // self.n]!r} '
-                          f'({len(rows)} links): ', end='')
-                count += check(keep, pos2)
+            if cat2 is None:
+                self._log('No category specified for {0:P:I}: splitting', pos1)
+                # Check which blocks have items turned on
+                for cat in range(len(self.categories)):
+                    if cat == cat1:
+                        continue
+                    ms = mask[self.cat_slice(cat)]
+                    if ms.any():
+                        if cat2 is None:
+                            self._log(
+                                'Processing {2:M:X} links from {0:P:I} to '
+                                '{1:N:C} now', pos1, cat, ms, cont=True
+                            )
+                            cat2 = cat
+                        else:
+                            self._log(
+                                'Processing {2:M:X} links from {0:P:I} to '
+                                '{1:N:C} later', pos1, cat, ms, cont=True
+                            )
+                            stack.appendleft((pos1, cat, mask))
 
-        if self._debug:
-            print()
+                # If no one-bits were found
+                if cat2 is None:
+                    self._log('Nothing to do!\n', cont=True)
+                    continue
+                self._log('')
+
+            unlink = self.matrix[pos1] & mask & self.cat_mask(cat2)
+
+            self._log('Removing links from {0:P:I} to {1:N:C}: {2:M:L}',
+                      pos1, cat2, unlink)
+
+            delta = unlink.sum()
+            count += delta
+
+            if not delta:
+                self._log('Nothing to do!', cont=True)
+                continue
+
+            self._log('Found {0:M:X} links to {1:N:C}: {0:M:L}\n',
+                      unlink, cat2, cont=True)
+            self.matrix[pos1, unlink] = self.matrix[unlink, pos1] = False
+
+            count += update(pos1, cat2, unlink)
+            for pos2 in np.flatnonzero(mask):
+                count += update(pos2, cat1, pos1)
+
+        self._dedent()
 
         return count
 
@@ -986,31 +1255,1041 @@ class Solver:
 
         Return
         ------
-        links : set
-            All links between `pos` and `cat`, as positions similar to
-            `pos`.
+        links : numpy.ndarray
+            All items in `cat` linked to `pos`, as indices within
+            :py:attr:`matrix`.
+        """
+        s = self.cat_slice(cat)
+        return np.flatnonzero(self.matrix[pos, s]) + s.start
+
+    def register_assertion(self, assertion):
+        """
+        Add `assertion` to :py:attr:`assertions` so that it can be
+        triggered as part of
+        :ref:`implication <elimination-logic-implications>` analysis.
+
+        This is a utility method that should not be called by the user
+        directly under normal circumstances. It is used by the methods
+        that implement :ref:`elimination-logic-implicit` rules.
+        """
+        assertions = self.assertions
+        def register(key):
+            if key not in assertions:
+                assertions[key] = []
+            if assertion not in assertions[key]:
+                assertions[key].append(assertion)
+        register((assertion.pos1, assertion.cat))
+        register((assertion.pos2, assertion.cat))
+
+    def remove_assertion(self, assertion):
+        """
+        Remove `assertion` from :py:attr:`assertions` so that it will no
+        longer be triggered in
+        :ref:`implication <elimination-logic-implications>` analysis.
+
+
+        This is a utility method that should not be called by the user
+        directly under normal circumstances. It is used by
+        :py:class:`Assertion.update` when the assertion is
+        :py:attr:`~Assertion.satisfied`.
+        """
+        assertions = self.assertions
+        def remove(key):
+            if key in assertions:
+                assertions[key].remove(assertion)
+                if not assertions[key]:
+                    del assertions[key]
+        remove((assertion.pos1, assertion.cat))
+        remove((assertion.pos2, assertion.cat))
+
+    def cat_slice(self, cat):
+        """
+        Create a slice that represents the block corresponding to `cat`
+        in :py:attr:`matrix`.
         """
         start = cat * self.n
         end = start + self.n
-        return set(np.flatnonzero(self.matrix[pos, start:end]) + start)
+        return slice(start, end)
 
-    def _set_link(self, pos1, pos2, value):
+    def cat_mask(self, cat):
         """
-        Create or destroy a link between two items, regardless of
-        category or position.
+        Create a mask that is ones in the block of :py:attr:`n` elements
+        corresponding to `cat`, and `False` elsewhere.
+        """
+        mask = np.zeros(len(self.labels), dtype=np.bool)
+        mask[self.cat_slice(cat)] = True
+        return mask
 
-        This method facilitates symmetry. It does no error checking
-        whatsoever!
+    def pos_mask(self, pos):
         """
-        self.matrix[pos1, pos2] = self.matrix[pos2, pos1] = value
+        Create a mask that only has the bit at `pos` set to `True`.
+        """
+        mask = np.zeros(len(self.labels), dtype=np.bool)
+        mask[pos] = True
+        return mask
 
-    def _set_swath(self, pos, start, size, value):
+    def _indent(self):
         """
-        Create or destroy a contiguous set of links to `pos`.
+        Increase the indentation level if debugging output is enabled.
+        """
+        if self._debug:
+            self._debug += 1
 
-        The first `size` elements starting at `start` are linked to
-        `pos`. This method facilitates symmetry. It does no error
-        checking whatsoever!
+    def _dedent(self):
         """
-        end = start + size
-        self.matrix[pos, start:end] = self.matrix[start:end, pos] = value
+        Decrease the indentation level if debugging output is enabled.
+        """
+        if self._debug > 1:
+            self._debug -= 1
+
+    def _log(self, fmt, *args, start=False, cont=False):
+        """
+        If debugging is enabled, print the formatted message, with
+        format replacements.
+
+        The :py:attr:`_debug` variable determines the level of
+        indentation of the output.
+
+        Arguments are formatted in curly braces. There is an index, an
+        input format and an output format, separated by a colon::
+
+            {Index:InputFormat:OutputFormat}
+
+        Index :
+            The index of the argument in `args`.
+        InputFormat :
+            One of the items in the following table.
+
+            +========+=================================+=======================+
+            | Format |             Description         |  Valid OutputFormats  |
+            +========+=================================+=======================+
+            | P      | Matrix position (or int)        | P, I, L, C, N         |
+            +--------+---------------------------------+-----------------------+
+            | I      | Item: either a label or a tuple | P, I, L, C, N         |
+            +--------+---------------------------------+-----------------------+
+            | C      | Category label                  | C, N                  |
+            +--------+---------------------------------+-----------------------+
+            | N      | Category index                  | C, N                  |
+            +--------+---------------------------------+-----------------------+
+            | M      | Bit Mask                        | P, I, L, X            |
+            +--------+---------------------------------+-----------------------+
+            | S      | Iterable (set) of positions     | P, I, L, X            |
+            +--------+---------------------------------+-----------------------+
+            | T      | Tuple with category label set   | P, I, L, C, N, X      |
+            +--------+---------------------------------+-----------------------+
+            | L      | (position, category) tuple      | P, I, L, C, N, X      |
+            +--------+---------------------------------+-----------------------+
+
+        OutputFormat:
+            One of the items in the following table.
+
+            +========+==========================+======================+
+            | Format |        Description       |  Valid InputFormats  |
+            +========+==========================+======================+
+            | P      | Matrix position (or int) | P, I, M, S, L        |
+            +--------+--------------------------+----------------------+
+            | I      | Item as "category:label" | P, I, M, S, L        |
+            +--------+--------------------------+----------------------+
+            | L      | Item as "label" only     | P, I, M, S, L        |
+            +--------+--------------------------+----------------------+
+            | C      | Category label           | P, I, C, N, M, S, L  |
+            +--------+--------------------------+----------------------+
+            | N      | Category index           | P, I, C, N, M, S, L  |
+            +--------+--------------------------+----------------------+
+            | X      | Count                    | M, S, L              |
+            +--------+--------------------------+----------------------+
+            | S      | str() representation     | * (iterable if S)    |
+            +--------+--------------------------+----------------------+
+            | R      | repr() representation    | * (iterable if S)    |
+            +--------+--------------------------+----------------------+
+            
+        """
+        if not self._debug:
+            return
+
+        def make_iterable(it, func):
+            return '{' + ', '.join(func(i) for i in it) + '}'
+
+        def cat_out(cat, fout):
+            if fout == 'c':
+                return repr(self.categories[cat])
+            elif fout == 'n':
+                return repr(cat)
+            raise ValueError(f'Invalid category format "{fout.upper()}"')
+
+        def pos_out(pos, fout):
+            if fout == 'p':
+                return repr(pos)
+            if fout == 'i':
+                return ':'.join(map(repr, self.pos_to_item(pos)))
+            if fout == 'l':
+                return repr(self.labels[pos])
+            raise ValueError(f'Invalid position format "{fout.upper()}"')
+
+        def poss_out(poss, fout):
+            if fout == 'x':
+                return repr(len(poss))
+            return make_iterable(poss, lambda pos: pos_out(pos, fout))
+
+        def sub(index, fin, fout):
+            arg = args[index]
+
+            if fout == 'r':
+                if fin == 's':
+                    return make_iterable(arg, repr)
+                return repr(arg)
+            if fout == 's':
+                if fin == 's':
+                    return make_iterable(arg, str)
+                return str(arg)
+
+            if fin in 'cn':
+                if fin == 'c':
+                    arg = self.categories.index(arg)
+                return cat_out(arg, fout)
+
+            if fin in 'lmst':
+                if fin == 'l':
+                    pos, cat = arg
+                    if fout in 'cn':
+                        return cat_out(cat, fout)
+                    if fout in 'pil':
+                        return pos_out(pos, fout)
+                    arg = np.flatnonzero(self.matrix[pos] & self.cat_mask(cat))
+                elif fin == 'm':
+                    arg = np.flatnonzero(arg)
+                elif fin == 't':
+                    category, items = arg
+                    arg = [self.item_to_pos((category, item))[0]
+                           for item in items]
+                    if fout in 'cn':
+                        cat = self.categories.index[category]
+                        return cat_out(cat, fout)
+                arg = sorted(set(arg))
+                if len(arg) == 1 and fout != 'x':
+                    return pos_out(arg[0], fout)
+                return poss_out(arg, fout)
+            elif fin == 'i':
+                arg = self.item_to_pos(arg)[0]
+            elif fin != 'p':
+                raise ValueError(f'Invalid input format "{fin.upper()}"')
+
+            if fout in 'cn':
+                return cat_out(arg // self.n, fout)
+            return pos_out(arg, fout)
+
+        def replace(match):
+            index = int(match.group(1))
+            fin = match.group(2).lower()
+            fout = match.group(3).lower()
+            return sub(index, fin, fout)
+
+        output = re.sub('{(\d+):(.):(.)}', replace, fmt)
+
+        print(' ' * (4 * (self._debug - 2)), end='')
+        if start:
+            print('*** ', end='')
+        if cont:
+            print('|-> ', end='')
+        print(output, end='')
+        if start:
+            print(' ***')
+        print()
+
+
+class Assertion:
+    """
+    Implements indirect rules for the solver.
+
+    Assertions do not exist independently of a :py:class:`Solver`. They
+    are registered through high-level methods like
+    :py:meth:`Solver.greater_than`, and removed once they are
+    :py:attr:`satisfied`.
+
+    An example of an assertion is "The green thing is next to the 78lb
+    thing". Until the implicit position of both "green" and "78lb" are
+    known, the assertion will hang around and hopefully help prune some
+    edges here and there.
+
+    In general, assertions link two nodes through a category. The
+    category may be the category of either linked item, but usually is
+    not in practice.
+
+    This class is abstract. Child classes are provided to implement the
+    various comparisons supported by the solver. The list of assertions
+    currently provided by the module is based on the instances of
+    puzzles that inspired it rather than completeness. Feel free to add
+    more, and give examples of the sorts of rules they implement.
+    """
+    def __init__(self, solver, item1, item2, category, key=None):
+        """
+        Set up an assertion linking two items of interest via a
+        category.
+
+        `item1` and `item2` may be either a label or a two-element
+        (category, label) tuple. The latter is required if a label is
+        ambiguous is a tuple. The category will be determined
+        automatically in the former case.
+
+        Depending on the assertion, the order of the items may matter.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver that this assertion operates in.
+        item1 :
+            The first item of interest.
+        item2 :
+            The second item of interest.
+        category :
+            The label of the category that links the items.
+        """
+        self._dict__['solver'] = solver
+        self.__dict__['pos1'], self.__dict__['cat1'] = \
+            solver.item_to_pos(item1)
+        self.__dict__['pos2'], self.__dict__['cat2'] = \
+            solver.item_to_pos(item2)
+        self.__dict__['cat'] = solver.categories.index(category)
+        self.__dict__['key'] = self.default_key if key is None else key
+        self.__dict__['_cat_slice'] = solver.cat_slice(self.cat)
+        self._depth = 0
+
+    def __repr__(self):
+        """
+        Return a computer-readable-ish string representation.
+        """
+        return f'{type(self).__name__}(solver, {", ".join(self._rlabels())})'
+
+    def __str__(self):
+        """
+        Return a human readable string representation.
+
+        The default implementation delegates to :py:meth:`__repr__`, so
+        child classes should override it.
+        """
+        return repr(self)
+
+    @property
+    def solver(self):
+        """
+        The :py:class:`Solver` that this assertion is part of.
+        """
+        return self.__dict__['solver']
+
+    @property
+    def pos1(self):
+        """
+        The index of the first item this assertion links, as a position
+        in :py:attr:`solver`\ 's :py:attr:`~Solver.matrix`.
+        """
+        return self.__dict__['pos1']
+
+    @property
+    def cat1(self):
+        """
+        The category index of the first item this assertion links, as an
+        index into :py:attr:`solver`\ 's :py:attr:`~Solver.categories`.
+
+        This may or may not be the same as :py:attr:`cat` and
+        :py:attr:`cat2`.
+        """
+        return self.__dict__['cat1']
+
+    @property
+    def pos2(self):
+        """
+        The index of the second item this assertion links, as a position
+        in :py:attr:`solver`\ 's :py:attr:`~Solver.matrix`.
+        """
+        return self.__dict__['pos2']
+
+    @property
+    def cat2(self):
+        """
+        The category index of the second item this assertion links, as
+        an index into :py:attr:`solver`\ 's :py:attr:`~Solver.categories`.
+
+        This may or may not be the same as :py:attr:`cat` and
+        :py:attr:`cat1`.
+        """
+        return self.__dict__['cat2']
+
+    @property
+    def cat(self):
+        """
+        The index of the category through which the items in this
+        assertion are linked.
+
+        This may or may not be the same as either of :py:attr:`cat1` and
+        :py:attr:`cat2`, but it can't be the same as both.
+        """
+        return self.__dict__['cat']
+
+    @property
+    def key(self):
+        """
+        A function that maps the items in :py:attr:`cat` to comparable
+        values.
+
+        This function must accept a :py:class:`Solver` and a matrix
+        position as arguments. The return value is the type of key that
+        :py:meth:`op` supports. The default implementation of this
+        method is :py:meth:`default_key`, which just maps the position
+        to the corresponding label.
+
+        All currently implemented assertions have a built-in assumption
+        that the result of this function will be a number, but this is
+        not a requirement in the general case.
+        """
+        return self.__dict__['key']
+
+    @property
+    def satisfied(self):
+        """
+        Determines if this assertion has been satisfied based on the
+        additional information provided to the solver.
+
+        An assertion is satisfied when the number of links between each
+        of the items of interest and the linking category is one.
+        """
+        s1 = self.solver.matrix[self.pos1, self._cat_slice].sum()
+        s2 = self.solver.matrix[self.pos2, self._cat_slice].sum()
+        return s1 == s2 == 1
+
+    @property
+    def _cat_slice(self):
+        """
+        A :py:class:`slice` object used to access the elements that
+        correspond to :py:attr:`cat` in a matrix row.
+
+        This is provided as a convenience to avoid calling
+        :py:meth:`Solver._cat_slice` multiple times.
+        """
+        return self.__dict__['_cat_slice']
+
+    def verify(self):
+        """
+        Check the assertion for all available links from the items to
+        the category, and remove any invalid possibilities.
+
+        This method may end up being recursive if a link removal
+        triggers a re-verification of this assertion. In that case, the
+        current execution will be aborted in favor of the updated one.
+        """
+        self.solver._indent()
+
+        # Initialize the 
+        self._depth += int(copysign(self._depth, 1))
+        depth = self._depth
+
+        self.solver._log('Verifying assertion {0:*:S}', self, start=True)
+        self.solver._log('Current Depth = {0:P:P}', depth, cont=True)
+
+        count = 0
+
+        options1 = {self.key(self.solver, pos): pos 
+                    for pos in self.solver.linked_set(self.pos1, self.cat)}
+        options2 = {self.key(self.solver, pos): pos
+                    for pos in self.solver.linked_set(self.pos2, self.cat)}
+        to_check2 = options2.copy()
+
+        self.solver._log('{0:N:C} options for {1:P:I}: {2:S:L}',
+                         self.cat, self.pos1, options1, cont=True)
+        self.solver._log('{0:N:C} options for {1:P:I}: {2:S:L}\n',
+                         self.cat, self.pos2, options2, cont=True)
+
+        self.solver._log('Checking options for {0:P:I}', self.pos1)
+        self.solver._indent()
+
+        for i1 in options1:
+            i2 = self.is_valid(i1, options2.keys())
+            p1 = options1[i1]
+            if i2 is None:
+                self.solver._log('No match for {0:P:I}: unlinking from {1:P:I}',
+                                 p1, self.pos1)
+                count += self.solver.unlink(p1, self.pos1)
+                if not self._check_depth(depth):
+                    return count
+            else:
+                p2 = options2[i2]
+                self.solver._log('{0:P:I} matches {1:P:I}', p1, p2)
+                to_check2.pop(i2, None)
+
+        self.solver._dedent()
+        self.solver._log('Checking remaining options for {0:P:I}', self.pos2)
+        self.solver._indent()
+
+        for i2 in to_check2:
+            i1 = self.is_valid(i2, options1.keys(), reverse=True)
+            p2 = to_check2[i2]
+            if i1 is None:
+                self.solver._log('No match for {0:P:I}: unlinking from {1:P:I}',
+                                 p2, self.pos2)
+                count += self.solver.unlink(p2, self.pos2)
+                if not self._check_depth(depth):
+                    return count
+            else:
+                p1 = options1[i1]
+                self.solver._log('{0:P:I} matches {1:P:I}', p2, p1)
+
+        self.solver._dedent()
+
+        if self._depth > 0 and self.satisfied:
+            self.solver.remove_assertion(self)
+            self._depth = -self._depth
+
+        if depth == 1:
+            self._depth = 0
+
+        self.solver._dedent()
+        return count
+
+    def op(self, key1, key2):
+        """
+        The comparison operation that this assertion represents.
+
+        This method is applied to items in the linking category after
+        the key function has been applied to them. The key function is
+        just the item label by default, but does not have to be. The
+        order of the inputs matters (in the general case).
+
+        Parameters
+        ----------
+        key1 :
+            The first (left) item key to compare.
+        key2 :
+            The second (right) item key to compare.
+
+        Return
+        ------
+        bool :
+            A flag determining if the comparison succeeded or not.
+        """
+        raise NotImplementedError('Please implement this method in a '
+                                  'child class')
+
+    def is_valid(self, key, options, reverse=False):
+        """
+        Verify that there is at least one option ``opt`` in `options`
+        that returns `True` for ``op(key, opt)``.
+
+        The key is just the item label by default, but does not have to
+        be.
+
+        The default implementation performs a linear search of
+        `options` using :py:meth:`op`. This method is provided to allow
+        children to optimize the comparison.
+
+        Parameters
+        ----------
+        key :
+            The item key to check.
+        options : set
+            A set of options to compare against.
+        reverse : bool
+            If `True`, the comparison is ``op(opt, key)`` instead of
+            the usual ``op(key, opt)``.
+
+        Return
+        ------
+        opt :
+            The first encountered option that makes `item` valid, or
+            `None` if invalid.
+        """
+        op = (lambda key, opt: self.op(opt, key)) if reverse else self.op
+        checker = (opt for opt in options if op(key, opt))
+        return next(checker, None)
+
+    def update(self, pos12, posC):
+        """
+        Called when a link that is between either :py:attr:`pos1` or
+        :py:attr:`pos2` and `posC` in :py:attr:`cat` is severed.
+
+        The default is to re-:py:meth:`verify` the assersion as long as
+        `pos12` is indeed either :py:attr:`pos1` or :py:attr:`pos2` and
+        `posC` is in :py:attr:`cat`.
+
+        An assertion must remove itself if it is satisfied by an update.
+        """
+        self.solver._indent()
+        if pos12 not in (self.pos1, self.pos2):
+            self.solver._log('Skipping update: {0:P:I} is neither{1:P:I} '
+                             'nor {2:P:I}', pos12, self.pos1, self.pos2)
+            self._dedent()
+            return 0
+        if posC // self.solver.n != self.cat:
+            self.solver._log('Skipping update: {0:P:I} is not in {2:N:C}',
+                             posC, self.cat)
+            self._dedent()
+            return 0
+        self.solver._log('Triggering Verification')
+        count = self.verify()
+        self.solver._dedent()
+        if self.satisfied:
+            self.solver.remove_assertion(self)
+        return count
+
+    def default_key(self, solver, pos):
+        """
+        The default value for comparison is just the `solver`\ 's label
+        at `pos`.
+
+        The key function can either be passed in the constructor or
+        overriden in a child class. In either case, it must accept a
+        :py:class:`Solver` object and a matrix position as arguments.
+        """
+        return solver.labels[pos]
+
+    def _check_depth(self, depth):
+        """
+        Check if :py:meth:`verify` has been called since the current
+        `depth` was entered.
+
+        If the current :py:attr:`_depth` does not match `depth`, return
+        `False`. If `depth` is 0 or 1, reset :py:attr:`_depth` to 0
+        since the stack is unwound.
+        """
+        if depth != self._depth:
+            if depth == 1:
+                self._depth = 0
+            return False
+        return True
+
+    def _labels(self):
+        """
+        Retrieves the labels for :py:attr:`pos1`, :py:attr:`pos2` and
+        :py:attr:`cat`, for use with :py:meth:`__str__`.
+        """
+        i1 = ':'.join(map(repr, self.solver.pos_to_item(self.pos1)))
+        i2 = ':'.join(map(repr, self.solver.pos_to_item(self.pos2)))
+        c = repr(self.solver.categories[self.cat])
+        return i1, i2, c
+
+    def _rlabels(self):
+        """
+        Retrieves the labels for :py:attr:`pos1`, :py:attr:`pos2` and
+        :py:attr:`cat`, for use with :py:meth:`__repr__`.
+        """
+        i1 = '(' + ', '.join(map(repr,
+                                 self.solver.pos_to_item(self.pos1))) + ')'
+        i2 = '(' + ', '.join(map(repr,
+                                 self.solver.pos_to_item(self.pos2))) + ')'
+        c = repr(self.solver.categories[self.cat])
+        return i1, i2, c
+
+
+class AsymmetricAssertionMixin:
+    """
+    A mixin class for assertions that care about the direction of the
+    difference between keys.
+    """
+    def value(self, key1, key2):
+        """
+        Return the signed difference ``key2 - key1``.
+        """
+        return key2 - key1
+
+
+class SymmetricAssertionMixin:
+    """
+    A mixin class for assertions that care only about the magnitude of
+    the difference between keys.
+    """
+    def value(self, key1, key2):
+        """
+        Return the absolute value of the difference ``|key2 - key1|``.
+        """
+        return abs(key2 - key1)
+
+
+class OffsetAssertion(AsymmetricAssertionMixin, Assertion):
+    """
+    Assert that two items are a fixed distance from each other in a
+    particular order.
+    """
+    def __init__(self, solver, item1, item2, category, offset):
+        """
+        Set up an assertion that ``item2 - item1 == offset``.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver that this assertion operates in.
+        item1 :
+            The first item of interest.
+        item2 :
+            The second item of interest.
+        category :
+            The label of the category that links the items.
+        offset :
+            The required difference between the items, with sign and
+            magnitude.
+        """
+        super().__init__(solver, item1, item2, category)
+        self.__dict__['offset'] = offset
+
+    def __repr__(self):
+        """
+        Return a computer-readable-ish string representation.
+        """
+        return f'{super().__repr__()[:-1]}, {self.offset!r})'
+
+    def __str__(self):
+        """
+        Return a human readable string representation.
+        """
+        i1, i2, c = self._labels()
+        return f'Assert that {c} of {i1} + {self.offset} == {c} of {i2}'
+
+    @property
+    def offset(self):
+        """
+        The offset separating the items.
+        """
+        return self.__dict__['offset']
+
+    def op(self, key1, key2):
+        """
+        Checks if the difference between two items is :py:attr:`offset`.
+
+        The difference is computed by
+        :py:meth:`AsymmetricAssertionMixin.value`.
+        """
+        return self.value(key1, key2) == self.offset
+
+    def is_valid(self, key, options, reverse=False):
+        """
+        An optimized version of the default
+        :py:meth:`Assertion.is_valid` method.
+
+        Since :py:attr:`.offset` is fixed, a simple check as to whether
+        ``key + offset`` is in `options` suffices. For the `reverse`
+        case, we check ``key - offset``.
+        """
+        key = key - self.offset if reverse else key + self.offset
+        if key in options:
+            return key
+        return None
+
+
+class AdjacencyOffsetAssertion(SymmetricAssertionMixin, OffsetAssertion):
+    """
+    Assert that two items are a fixed distance from each other,
+    regardless of direction.
+    """
+    def is_valid(self, key, options, reverse=False):
+        """
+        An optimized version of the default
+        :py:meth:`Assertion.is_valid` method.
+
+        Since :py:attr:`.offset` is fixed, a simple check as to whether
+        one of ``key + offset`` or ``key - offset`` is in `options`
+        suffices.
+        """
+        key1 = key + self.offset
+        if key1 in options:
+            return key1
+        key2 = key - self.offset
+        if key2 in options:
+            return key2
+        return None
+
+    def __str__(self):
+        """
+        Return a human readable string representation.
+        """
+        i1, i2, c = self._labels()
+        return f'Assert that {i1} and {i2} are {self.offset} apart in {c}'
+
+
+class BoundedAssertion(AsymmetricAssertionMixin, Assertion):
+    """
+    Assert that two items are withn a range of values from each other,
+    like :py:class:`BoundedExclusiveAssertion`, but inclusive of both
+    ends.
+
+    The direction matters for this assertion.
+    """
+    def __init__(self, solver, item1, item2, category, lower, upper):
+        """
+        Set up an assertion that
+        ``[lower <=] item2 - item1 [<= upper]``.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver that this assertion operates in.
+        item1 :
+            The first item of interest.
+        item2 :
+            The second item of interest.
+        category :
+            The label of the category that links the items.
+        lower :
+            The optional lower bound for the comparison. If omitted the
+            difference just has to be less than or equal to `upper`.
+        upper :
+            The optional upper bound for the comparison. If omitted the
+            difference just has to be greater than or equal to `lower`.
+        """
+        super().__init__(solver, item1, item2, category)
+        self.__dict__['lower'] = lower
+        self.__dict__['upper'] = upper
+
+    def __repr__(self):
+        """
+        Return a computer-readable-ish string representation.
+        """
+        return f'{super().__repr__()[:-1]}, {self.lower!r}, {self.upper!r})'
+
+    def __str__(self):
+        """
+        Return a human readable string representation.
+        """
+        i1, i2, c = self._labels()
+        l = '' if self.lower is None else f'{self.lower!r} <= '
+        u = '' if self.upper is None else f' <= {self.upper!r}'
+        return f'Assert that {l}{i1} - {i2}{u} in {c}'
+
+    @property
+    def lower(self):
+        """
+        The inclusive lower bound of the comparison.
+
+        If `None`, the comparison is unbounded on the low end.
+        """
+        return self.__dict__['lower']
+
+    @property
+    def upper(self):
+        """
+        The inclusive upper bound of the comparison.
+
+        If `None`, the comparison is unbounded on the high end.
+        """
+        return self.__dict__['upper']
+
+    def op(self, key1, key2):
+        """
+        Check if the difference between two items is between
+        :py:attr:`lower` and :py:attr:`upper`, inclusive.
+
+        Unset bounds are not checked. That part of the test always
+        evaluates to `True`.
+
+        The difference is computed by
+        :py:meth:`AsymmetricAssertionMixin.value`.
+        """
+        diff = self.value(key1, key2)
+        if self.lower is not None and diff < self.lower:
+            return False
+        if self.upper is not None and diff > self.upper:
+            return False
+        return True
+
+    def is_valid(self, key, options, reverse=False):
+        """
+        In some cases, it is possible to optimize the default
+        :py:meth:`Assertion.is_valid` method.
+
+        If both bounds are :py:class:`int`, meaning that the search
+        space is finite and discrete, it may be faster to check the
+        range of offsets rather than finding a match in `options`
+        directly. The reverse case is computed by swapping the bounds
+        and their signs.
+
+        If an optimization is possible, the bounds of the search space
+        are is computed by :py:meth:`bounds`, the iterator over the
+        space by :py:meth:`space`, and the size of it by
+        :py:meth:`nspace`.
+        """
+        if not isinstance(self.upper, int) or not isinstance(self.lower, int) \
+                        or self.nspace() > len(options):
+            return super().is_valid(key, options, reverse)
+
+        self.solver._indent()
+        self.solver._log('Optimized search possible for {0:*:R} among {1:S:R}',
+                         key, options)
+
+        lower, upper = self.bounds(reverse)
+        space = self.space(key, lower, upper)
+        checker = (s for s in space if s in options)
+
+        self.solver._dedent()
+        return next(checker, None)
+
+    def bounds(self, reverse):
+        """
+        Compute the bounds of the space of possibilities for the
+        difference between the items.
+
+        This method should only be used after checking that
+        :py:attr:`lower` and :py:attr:`upper` can both be negated. It
+        allows child classes to override the type of difference the
+        assertion checks for.
+
+        If `reverse` is set, the bounds are reversed and negated.
+        """
+        if reverse:
+            return -self.upper, -self.lower
+        return self.lower, self.upper
+
+    def space(self, key, lower, upper):
+        """
+        Create an iterator of all valid possibilities with `key` as the
+        first item in the comparison.
+
+        This method should only be used after ensuring that `lower` and
+        `upper` are both integers. It allows child classes to override
+        the type of difference that the assertion checks for.
+        """
+        return range(key + lower, key + upper + 1)
+
+    def nspace(self):
+        """
+        The number of elements in the iterator returned by
+        :py:meth:`space`.
+
+        This method allows a check to determine if the search can be
+        optimized before actually creating the iterator. This method
+        should only be used after ensuring that :py:attr:`lower` and
+        :py:attr:`upper` are both integers. It allows child classes to
+        override the type of difference that the assertion checks for.
+        """
+        return self.upper - self.lower + 1
+
+
+class BoundedExclusiveAssertion(BoundedAssertion):
+    """
+    Assert that two items are withn a range of values from each other,
+    like :py:class:`BoundedAssertion`, but exclusive of both ends.
+
+    The direction matters for this assertion.
+    """
+    def __str__(self):
+        """
+        Return a human readable string representation.
+        """
+        i1, i2, c = self._labels()
+
+        if self.lower == 0 and self.upper is None:
+            return f'Assert that {i1} < {i2} in {c}'
+        if self.lower is None and self.upper == 0:
+            return f'Assert that {i1} > {i2} in {c}'
+
+        l = '' if self.lower is None else f'{self.lower!r} < '
+        u = '' if self.upper is None else f' < {self.upper!r}'
+        return f'Assert that {l}{i1} - {i2}{u} in {c}'
+
+    def op(self, key1, key2):
+        """
+        Check if the difference between two items is between
+        :py:attr:`~BoundedAssertion.lower` and
+        :py:attr:`~BoundedAssertion.upper`, exclusive.
+
+        Unset bounds are not checked. That part of the test always
+        evaluates to `True`.
+
+        The difference is computed by
+        :py:meth:`AsymmetricAssertionMixin.value`.
+        """
+        diff = self.value(key1, key2)
+        if self.lower is not None and diff <= self.lower:
+            return False
+        if self.upper is not None and diff >= self.upper:
+            return False
+        return True
+
+    def space(self, key, lower, upper):
+        """
+        Create an iterator of all valid possibilities with `key` as the
+        first item in the comparison.
+
+        This method should only be used after ensuring that `lower` and
+        `upper` are both integers. It allows child classes to override
+        the type of difference that the assertion checks for.
+        """
+        return range(key + lower + 1, key + upper)
+
+    def nspace(self):
+        """
+        The number of elements in the iterator returned by
+        :py:meth:`space`.
+
+        This method allows a check to determine if the search can be
+        optimized before actually creating the iterator. This method
+        should only be used after ensuring that
+        :py:attr:`~BoundedAssertion.lower` and
+        :py:attr:`~BoundedAssertion.upper` are both integers. It allows
+        child classes to override the type of difference that the
+        assertion checks for.
+        """
+        return self.upper - self.lower - 1
+
+
+class BandedAssertion(SymmetricAssertionMixin, BoundedAssertion):
+    """
+    Assert that two items are with a range of values from eachother,
+    irrespective of direction, inclusive of both bounds.
+    """
+    def __str__(self):
+        """
+        Return a human readable string representation.
+        """
+        i1, i2, c = self._labels()
+
+        if self.upper is None:
+            return ('Assert that distance between '
+                    f'{i1} and {i2} >= {self.lower} in {c}')
+        if self.lower is None:
+            return ('Assert that distance between '
+                    f'{i1} and {i2} <= {self.lower} in {c}')
+
+        l = '' if self.lower is None else f'{self.lower} <= '
+        u = '' if self.upper is None else f' <= {self.upper}'
+        return f'Assert that distance between {l}{i1} and {i2}{u} in {c}'
+
+    def bounds(self, reverse):
+        """
+        Compute the bounds of the space of possibilities for the
+        difference between the items.
+
+        This method ignores `reverse` because the bounds are symmetric
+        about the origin. Both bounds should be positive.
+        """
+        return self.lower, self.upper
+
+    def space(self, key, lower, upper):
+        """
+        Create an iterator of all valid possibilities with `key` as the
+        first item in the comparison.
+
+        The iterator will contain two distjoined portions.
+
+        This method should only be used after ensuring that `lower` and
+        `upper` are both integers. It allows child classes to override
+        the type of difference that the assertion checks for.
+        """
+        if lower == 0:
+            return range(key - upper, key + upper + 1)
+        return chain(range(key - upper, key - lower + 1),
+                     range(key + lower, key + upper + 1))
+
+    def nspace(self):
+        """
+        The number of elements in the iterator returned by
+        :py:meth:`space`.
+
+        The value returned by this method is twice the one returned by
+        :py:meth:`BoundedAssertion.nspace` because it is symmetric about
+        the origin.
+
+        This method allows a check to determine if the search can be
+        optimized before actually creating the iterator. This method
+        should only be used after ensuring that
+        :py:attr:`~BoundedAssertion.lower` and
+        :py:attr:`~BoundedAssertion.upper` are both integers. It allows
+        child classes to override the type of difference that the
+        assertion checks for.
+        """
+        return 2 * (self.upper - self.lower + 1)

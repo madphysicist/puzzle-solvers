@@ -213,3 +213,10 @@ todo_include_todos = True
 # Suppress trailing parentheses
 add_function_parentheses = False
 
+
+def setup(app):
+    """
+    Add custom stylesheet(s).
+    """
+    app.add_stylesheet('custom.css')
+

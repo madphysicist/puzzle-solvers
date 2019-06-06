@@ -1,4 +1,8 @@
-0.0.1 - 2019, May 30
+0.0.1a2 - 2019, Jun 6
+    - Added automatic assertions
+    - Overhauled implication analysis
+    - Updated docs
+0.0.1a1 - 2019, May 30
     - Initial release
     - Elimination puzzles
 

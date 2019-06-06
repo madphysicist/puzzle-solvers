@@ -48,7 +48,8 @@ Tutorial
 
 As an example, we will show how to work through the problem in the
 [Stack Overflow question][1] that inspired this package in the first place. The
-full code can be found in `puzzle_solvers.demos.elimination`.
+full code can be found among the :ref:`setup-demos` at
+`puzzle_solvers.demos.elimination`.
 
 The original problem statement is in German and can be found [here][2] (along
 with the [solution][3]). The following is as literal of a translation into
@@ -72,20 +73,26 @@ yellow, green, red, black) and sizes (XS, S, M, L, XL).
 Rules
 =====
 
-1. The top, Dana wants to buy is size XL.
+1. The top Dana wants to buy is size XL.
+
     a. She is ahead of (but not directly ahead) of someone who wants to buy a
        black top.
+
 2. Jessica waits directly in front of a person who wants to buy a Poloshirt.
 3. The second person in line wants to buy a yellow top.
 4. The T-shirt isn't red.
 5. Sören wants to buy a Sweatshirt.
+
     a. The person who waits directly in front of him is older than the one
        behind him.
+
 6. Ingo needs a size L top.
 7. The last person in line is 30 years old.
 8. The oldest person is going to buy the top with the smallest size.
 9. The person who waits directly behind Valerie wants to buy a red top.
+
     a. The red top is bigger than size S.
+
 10. The youngest person wants to buy a yellow top.
 11. Jessica is going to buy a Blouse.
 12. The third person in line wants to buy a size M top.
@@ -130,7 +137,7 @@ the items in each category::
     }
 
 The lists of values must be distinct within themselves, but not necessarily
-between each other.
+between each other. `None` is forbidden as either a category or item label.
 
 All the lists are sorted as much as makes sense. This is not required by the
 solver, but is convenient for us. It allows us to write something like "the
@@ -152,7 +159,7 @@ provides some methods for implementing the rules. If you want to see a detailed
 report of all the operations the solver performs, pass ``debug=True`` to the
 constructor.
 
-We can get a visual output of the state of the solver if matplotlib is
+We can get a visual output of the state of the solver if `matplotlib`_ is
 installed using the :py:meth:`~Solver.draw` method. A quick check shows that
 all the categories and items were added and linked correctly (see
 :eq:`elimination-complete`). Notice that there are no links within a category::
@@ -168,14 +175,12 @@ all the categories and items were added and linked correctly (see
    The initial problem space.
 
 
-.. _elimination-tutorial-solution-explicit:
+.. _elimination-tutorial-solution-rules:
 
-Explicit Rules
---------------
+Rules
+-----
 
-The rules are added to the solver by calling the higher-level methods. First we
-will add the explicit rules: ones that describe a single-level relationship
-between categories that doesn't depend on other information::
+The rules are added to the solver by calling the appropriate methods::
 
     solver.match('Dana', 'XL')
 
@@ -184,7 +189,8 @@ name ``'Dana'`` and the size ``'XL'``. As long as the names are unambiguous,
 just a label is sufficient. This is a process-of-elimination problem, so the
 solver removes all the possibilities that ``'Dana'`` may be any other size, and
 that anyone else might be size ``'XL'``. It then follows through with any
-additional :py:meth:`~Solver.implications` the changes might have.
+additional :ref:`implications <elimination-logic-implications>` the changes
+might have.
 
 If the same label is repeated in more than one category, the category is
 mandatory. Items can be specified unambiguously as two-element (category,
@@ -193,14 +199,30 @@ label) tuple. The line above could be rewritten as::
     solver.match(('name', 'Dana'), ('size', 'XL'))
 
 Note that all categories and labels must be an exact match with ``==``. In
-particular, strings are case sensitive. ::
+particular, strings are case sensitive. The first rule was
+:ref:`elimination-logic-explicit`. The next two rules are
+:ref:`elimination-logic-implicit`::
+
+    solver.less_than('Dana', 'black', 'position', 2, None)
+    solver.less_than('Jessica', 'Poloshirt', 'position', 1)
+
+These showcase the :py:meth:`~Solver.less_than` method, which creates an
+:py:class:`Assertion` that will keep getting updated as more information is
+discovered about the ``position``\ s of ``'Dana'``, ``'black'``, ``'Jessica'``
+and ``'Poloshirt'``. The first call asserts that ``'Dana'`` is *at least* two
+positions ahead of ``'black'`` in line. The upper bound is `None`. The second
+call asserts that ``'Jessica'`` is *exactly* one position ahead of
+``'Poloshirt'``. There is a reflected :py:meth:`~Solver.greater_than` method,
+as well as an :py:meth:`~Solver.adjacent_to` method that checks similar
+conditions regardless of the direction. ::
 
     solver.match(2, 'yellow')
-    solver.unlink('T-Shirt', 'red')
+    solver.unmatch('T-Shirt', 'red')
 
-:py:meth:`~Solver.unlink` eliminates a single connection. Like
-:py:meth:`~Solver.match`, it updates the solution with all of the resulting
-:py:meth:`~Solver.implications`. ::
+:py:meth:`~Solver.unmatch` eliminates a single connection. Like
+:py:meth:`~Solver.match`, it is :ref:`elimination-logic-explicit`. It updates
+the solution with all of the resulting
+:ref:`implications <elimination-logic-implications>`. ::
 
     solver.match('Sören', 'Sweatshirt')
     solver.match('Ingo', 'L')
@@ -219,100 +241,77 @@ ones. ::
     solver.match('Poloshirt', 'red', 'yellow', 'green')
 
 The categories of all the items passed to :py:meth:`~Solver.match` except the
-first must be the same. At this point, 95 (out of 300 :eq:`elimination-diff`)
+first must be the same. At this point, 116 (out of 300 :eq:`elimination-diff`)
 edges have been eliminated::
 
     >>> solver.edges
-    280
+    259
 
 
-.. _elimination-tutorial-solution-implicit:
+.. _elimination-tutorial-special:
 
-Implicit Rules
---------------
+Special Cases
+-------------
 
-Rules 1a, 2, 5a, 9 have not been used yet because they are implicit rules.
-Ordering rules are not fully supported at the moment. Instead, it is possible
-to make assertions that eliminate edges. The solver does not remember the
-assertions, so that they may have to be applied multiple times as more data
-becomes available.
+Only rule 5a has not been used up to this point. The assertions set up in steps
+1a, 2 and 9 still remain, awaiting the additional infomation::
 
-Before we begin, let us pre-process the information about ``'Sören'`` a little
-bit based on Rule 5a. This is mainly due to a failing of the solver, which
-can't currently handle multi-level rules like that. First, we can glean that
-``'Sören'`` can not be first or last, because he has people before and behind
-him::
+    >>> solver.assertion_count
+    3
 
-    solver.unlink('Sören', 1)
-    solver.unlink('Sören', 5)
+Looking at ``solver.assertions`` will tell us which rules are still not fully
+satisfied. You will see six mappings rather than 3, because each
+:py:class:`Assertion` object is mapped twice. Assertions will remove themselves
+from the :py:attr:`~Solver.assertions` dictionary as they are satisfied.
+
+Before we continue, let us pre-process the information about ``'Sören'`` a
+little bit based on the remaining rule. These steps are mainly due to a failing
+of the solver, which can't currently handle multi-level implicit rules like
+that. First, we can glean that ``'Sören'`` can not be first or last, because he
+has people before and behind him::
+
+    solver.unmatch('Sören', positions[0])
+    solver.unmatch('Sören', positions[-1])
+
+This still does not establish ``'Sören'``\ 's position. We can check using
+:py:meth:`~Solver.category_for`::
+
+    >>> solver.category_for('Sören', 'position')
+    
+
+This method will return a non-`None` value only if there is a 1-to-1 mapping
+between ``'Sören'`` in the category ``'position'``.
 
 Next, we can ensure that ``'Sören'`` is not behind the youngest person, since
 the person ahead of him must be older than the one behind::
 
     youngest = solver.category_for(ages[0], 'position')
     if youngest is not None:
-        solver.unlink('Sören', youngest + 1)
+        solver.unmatch('Sören', youngest + 1)
 
-And similarly, ``'Sören'`` can not be directly in front of the oldest person::
+Here, we use :py:meth:`~Solver.category_for` to find the position of he
+youngest person, and unlink the preceding one from ``'Sören'`` if it has been
+established. Similarly, ``'Sören'`` can not be directly in front of the oldest
+person::
 
     oldest = solver.category_for(ages[-1], 'position')
     if oldest is not None:
-        solver.unlink('Sören', oldest - 1)
+        solver.unmatch('Sören', oldest - 1)
 
-We can manually implement a loop for the remaining implicit rules::
-
-    count = 1
-    while count:   # Loop as long as some change occurred
-        count = solver.less_than('Dana', 'black', 'position', 2, None)
-
-In our convention, a lower position means being ahead. The
-:py:meth:`~Solver.less_than` assertion compares the positions available to
-``'Dana'`` and the color ``'black'``. If any of the remaining possibilities do
-not match the assertion, they are unlinked. For example, in the beginning, this
-method would remove the possibility that ``'Dana'`` could be last or that the
-``'black'`` top could be first in line. As a bonus, this method first unlinks
-``'Dana'`` from ``'black'``, since they can not be in the same position.
-
-Here we used the return value of :py:meth:`~Solver.match`, which indicates the
-number of edges actually severed, including through implications. All the high
-and low level elimination methods return the severed edge count. We also set
-the bounds for :py:meth:`~Solver.less_than` to ``2, None``. This means that
-``'Dana'`` is at least two positions below ``'black'``, with no upper limit.
-Only the upper limit may be `None`. When only a single bound is passed in, that
-indicates an exact match, as we will see next::
-
-        count += solver.less_than('Jessica', 'Poloshirt', 'position', 1)
-
-In this case, we specify an exact difference in the position. Any options
-remaining to ``'Jessica'`` and ``'Poloshirt'`` that do not give ``'Jessica'``
-the option of being exactly one spot ahead are removed. And of course,
-``'Jessica'`` and ``'Poloshirt'`` are premanently unlinked as well.
-
-        count += solver.less_than('Valerie', 'red', 'position', 1)
-
-To specify an upper or lower bound, both bounds must be specified. The call
-above could be rewritten as::
-
-        count += solver.less_than('Valerie', 'red', 'position', 0, 1)
-
-A lower bound of zero or one means "unbounded", with the same for an upper
-bound. The only remaining rule is 5a.
-
-Once this loop is complete, we have only 10 more edges to go::
+This leaves us with only 10 more edges to go::
 
     >>> solver.edges
     85
 
-We have done our best to ensure that all the rules except 5a are fully
-implemented. And in fact, we can verify that ``'Sören'``\ 's position has been
-fixed::
+The important thing is that ``'Sören'``\ 's position has been fixed, along with
+everyone else's::
 
     >>> solver.category_for('Sören', 'position')
     2
+    >>> solver.assertion_count
+    0
 
-:py:meth:`~Solver.category_for` will return the item in the ``'position'``
-category that has a 1-to-1 mapping to ``'Sören'``, if there is one, or `None`
-if not. We can also check there are two remaining age options and two remaining
+We can also check there are two remaining age options and two remaining
 positions, both around ``'Sören'``::
 
     >>> solver.find_missing('position')
@@ -320,7 +319,9 @@ positions, both around ``'Sören'``::
     >>> solver.find_missing('age')
     {27, 33}
 
-This is just a check. Here is how we can code the final step::
+This is just a check. :py:meth:`~Solver.find_missing` returns all the items in
+category ``'position'`` that do not have all their 1-to-1 mappings. Here is how
+we code the final step::
 
     pos = solver.category_for('Sören', 'position')
     ages = solver.find_missing('age')
@@ -396,20 +397,72 @@ Operations
 ==========
 
 This solver is a process of elimination one. Naturally, the fundamental
-operation it currently recognizes is severing an edge. The solver automates
-some extended cases like 1-to-N mappings between categories. It does not
-support indirect groupings like ordering at this time.
+operation it currently recognizes is severing an edge. Operations are preformed
+in response to rules.
 
-Let's say we have categories :math:`A` and :math:`B` with an item :math:`X` in
+
+.. _elimination-logic-rules:
+
+Rules
+=====
+
+There are two types of supported rules: explicit and implicit.
+
+
+.. _elimination-logic-explicit:
+
+Explicit
+--------
+
+Explicit rules are ones that can be completely satisfied at once, and whose
+consequences become an integral part of the state as soon as the relevant
+operations are carried out. An example of a direct rule is "Red is 5". All the
+necessary links can be severed immediately. Any further operations can fully
+take this rule into account based solely on the state it leaves behind.
+
+Another way to look at it is that explicit rules set a direct node-to-node
+relationship. Because of that, explicit rules make immediate changes to the
+state. Any further rules must use that state to follow through with their
+:ref:`elimination-logic-implications`.
+
+
+.. _elimination-logic-implicit:
+
+Implicit
+--------
+
+Implicit rules are ones that can not be satisfied without additional
+information in the general case. That is not to say that the solver may not be
+in a state that allows such a rule to be satisfied immediately when it is
+encountered. An example of an implicit rule is "The position of Red is less
+than the position of 5". Until the links between Red and 5 and the position
+category are fully specified through other rules, this rule can provide some
+information, but can not be completely represented in the state.
+
+Implicit rules set up a relationship between nodes through a category. While
+this allows for *some* direct changes, like unlinking the two nodes in
+question, implicit rules must be revisited once more information becomes
+available. Implicit rules are stored in :py:class:`Assertion` objects and
+re-evaluated whenever any potential endpoints change.
+
+
+.. _elimination-logic-implications:
+
+Implications
+============
+
+The most important aspect of this solver is its ability to follow through with
+the implications of an edge removal. To illustrate exactly what this means,
+let's say we have categories :math:`A` and :math:`B` with an item :math:`X` in
 :math:`A` and :math:`Y` in :math:`B`. When edge :math:`XY` is severed, it
 affects the relationship between :math:`X` and :math:`B`. The nodes in
 :math:`B` that :math:`X` is still connected to determine the entire set of
-connections that are allowed for :math:`X`. Any connections that :math:`X` has
-to nodes not also connected to the nodes it is connected to in :math:`B` must
-be severed. The process is recursive. It applies to :math:`Y` and :math:`A` by
-symmetry.
+connections that are allowed for :math:`X` elsewhere. Any connections that
+:math:`X` has to nodes not also connected to the nodes it is connected to in
+:math:`B` must be severed. The process is recursive. It applies to :math:`Y`
+and :math:`A` by symmetry.
 
-Edge removal is implemented in the :py:meth:`Solver.unlink` method.
+Single-edge removal is implemented in the :py:meth:`Solver.unmatch` method.
 
 A 1-to-many match between two categories is equivalent to removing multiple
 edges. Mapping node :math:`X` in category :math:`A` to a number of
@@ -425,6 +478,12 @@ this criterion must be severed.
 Matching to a single element of one category, both 1-to-1 and 1-to-many, is
 implemented in the :py:meth:`Solver.match` method.
 
+The final aspect of implications is that all affected categories must be
+checked against the implicit rules encountered up to that point. In the
+examples above, all the indirect rules linked through *either* :math:`A` *or*
+:math:`B` would have to be re-verified. Any edge removal affects the indirect
+rules at both ends, since the contents of the categories changes.
+
 
 .. _elimination-api:
 
@@ -434,26 +493,42 @@ API
 
 .. autoclass:: Solver
    :members:
-   :special-members:
+   :special-members: __init__
 
+.. autoclass:: Assertion
+   :members:
+   :special-members: __init__, __repr__, __str__
 
-.. _elimination-future:
+.. autoclass:: OffsetAssertion
+   :members:
+   :special-members: __init__, __repr__, __str__
 
-------------------
-Future Development
-------------------
+.. autoclass:: AdjacencyOffsetAssertion
+   :members:
+   :special-members: __init__, __repr__, __str__
 
-This module is woefully incomplete. It lacks one basic feature, which is a
-mechanism to handle comparison relationships permanently. A second missing
-thing is the ability to script the instructions more simply. For example, in
-the :ref:`elimination-tutorial-solution-implicit` section of the
-:ref:`elimination-tutorial`, the loop to handle the indirect rules was scripted
-manually. It would have been nice to be able to write something like the
-following, and have the solver set up the appropriate inferences itself::
+.. autoclass:: BoundedAssertion
+   :members:
+   :special-members: __init__, __repr__, __str__
 
-    age(position(Sören) - 1) > age(position(Sören) + 1)
+.. autoclass:: BoundedExclusiveAssertion
+   :members:
+   :special-members: __init__, __repr__, __str__
+
+.. autoclass:: BandedAssertion
+   :members:
+   :special-members: __init__, __repr__, __str__
+
+.. autoclass:: SymmetricAssertionMixin
+   :members:
+
+.. autoclass:: AsymmetricAssertionMixin
+   :members:
 
 
 .. [1]: https://stackoverflow.com/q/56284249/2988730
 .. [2]: https://i.imgur.com/1Bsi3Fu.jpg
 .. [3]: https://i.imgur.com/vIKnhj0.jpg
+
+
+.. include:: /link-defs.rst
