@@ -1,3 +1,5 @@
+0.0.1b1 - 2019, Jun 6
+    - Solved priginal zebra puzzle with no further modifications
 0.0.1a2 - 2019, Jun 6
     - Added automatic assertions
     - Overhauled implication analysis
