@@ -24,11 +24,11 @@
 .. Version: 28 May 2019: Initial Coding
 
 
-.. _GitHub: https://github.com/madphysicist/imprint
+.. _GitHub: https://github.com/madphysicist/puzzle-solvers
 .. _matplotlib: https://matplotlib.org/
 .. _napoleon: http://www.sphinx-doc.org/en/latest/usage/extensions/napoleon.html
 .. _numpy: http://www.numpy.org/
-.. _PyPI: https://pypi.org/project/imprint/
+.. _PyPI: https://pypi.org/project/puzzle-solvers/
 .. _pytest: https://docs.pytest.org/en/latest/
 .. _ReadTheDocs Theme: http://sphinx-rtd-theme.readthedocs.io/en/latest/
 .. _setuptools: https://setuptools.readthedocs.io/en/latest/
