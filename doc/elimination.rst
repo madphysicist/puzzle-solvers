@@ -388,7 +388,7 @@ The number of edges that the information must account for is therefore
 .. math::
    :label: elimination-diff
 
-   M * N^2 (M - 1) / 2 - N * M * (M - 1) / 2 = M * N * (M - 1) * (N - 1) / 2
+   \frac{M * N^2 * (M - 1)}{2} - \frac{N * M * (M - 1)}{2} = \frac{M * N * (M - 1) * (N - 1)}{2}
 
 
 .. _elimination-logic-operations:
