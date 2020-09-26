@@ -367,7 +367,7 @@ connected except those within a given category, for a total of
 .. math::
    :label: elimination-complete
 
-   M * N * (M * N - 1) / 2 - M * N * (N - 1) / 2 = M * N^2 (M - 1) / 2
+   \frac{M * N * (M * N - 1)}{2} - \frac{M * N * (N - 1)}{2} = \frac{M * N^2 * (M - 1)}{2}
 
 The first term on the left is the number of edges in the complete graph. The
 second term on the left is the number of edges between nodes within each of the
@@ -381,7 +381,7 @@ of edges in the final solution is
 .. math::
    :label: elimination-final
 
-   N * M * (M - 1) / 2
+   \frac{N * M * (M - 1)}{2}
 
 The number of edges that the information must account for is therefore
 
