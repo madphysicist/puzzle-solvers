@@ -289,7 +289,7 @@ the person ahead of him must be older than the one behind::
     if youngest is not None:
         solver.unmatch('Sören', youngest + 1)
 
-Here, we use :py:meth:`~Solver.category_for` to find the position of he
+Here, we use :py:meth:`~Solver.category_for` to find the position of the
 youngest person, and unlink the preceding one from ``'Sören'`` if it has been
 established. Similarly, ``'Sören'`` can not be directly in front of the oldest
 person::
