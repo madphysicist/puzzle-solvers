@@ -1544,7 +1544,7 @@ class Assertion:
         category :
             The label of the category that links the items.
         """
-        self._dict__['solver'] = solver
+        self.__dict__['solver'] = solver
         self.__dict__['pos1'], self.__dict__['cat1'] = \
             solver.item_to_pos(item1)
         self.__dict__['pos2'], self.__dict__['cat2'] = \

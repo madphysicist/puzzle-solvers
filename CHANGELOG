@@ -1,11 +1,14 @@
 0.0.1b2 - 2021, Dec 17
     - Updates to docs and f-strings
+
 0.0.1b1 - 2019, Jun 6
     - Solved original zebra puzzle with no further modifications
+
 0.0.1a2 - 2019, Jun 6
     - Added automatic assertions
     - Overhauled implication analysis
     - Updated docs
+
 0.0.1a1 - 2019, May 30
     - Initial release
     - Elimination puzzles
