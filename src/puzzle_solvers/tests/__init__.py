@@ -2,7 +2,7 @@
 
 # puzzle-solvers: a library of tools for solving puzzles
 #
-# Copyright (C) 2019  Joseph R. Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
+# Copyright (C) 2021  Joseph R. Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,12 +23,9 @@
 # SOFTWARE.
 
 # Author: Joseph Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
-# Version: 28 May 2019: Initial Coding
+# Version: 18 Dec 2021: Initial Coding
 
 """
-The `demos` sub-package provides drivers that showcase the corresponding
-solvers in the root package. These drivers are used to illustrate the
-various tutorials.
-
-Each puzzle type has one or more demos associated with it:
+The `tests` sub-package implements test cases for the solvers in the root
+package.
 """

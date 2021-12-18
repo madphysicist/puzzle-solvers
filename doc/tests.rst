@@ -1,6 +1,6 @@
 .. puzzle-solvers: a library of tools for solving puzzles
 
-.. Copyright (C) 2019  Joseph R. Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
+.. Copyright (C) 2021  Joseph R. Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
 
 .. Permission is hereby granted, free of charge, to any person obtaining a copy
 .. of this software and associated documentation files (the "Software"), to
@@ -21,35 +21,13 @@
 .. IN THE SOFTWARE.
 
 .. Author: Joseph Fox-Rabinovitz <jfoxrabinovitz at gmail dot com>
-.. Version: 28 May 2019: Initial Coding
+.. Version: 18 Dec 2021: Initial Coding
 
 
-.. _index:
+.. _tests:
 
-==========================================
-Welcome to Puzzle Solvers's documentation!
-==========================================
+=====
+Tests
+=====
 
-.. automodule:: puzzle_solvers
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-   :name: index-toc
-
-   setup
-   elimination
-   demos
-   tests
-
-
-==================
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-* :doc:`todos`
-
-Project home page: https://github.com/madphysicist/puzzle-solvers
+.. automodule:: puzzle_solvers.tests
