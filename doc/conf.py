@@ -200,7 +200,7 @@ intersphinx_mapping = {
         'https://matplotlib.org/',
         (None, '_intersphinx/matplotlib.inv')
     ), 'numpy': (
-        'https://docs.scipy.org/doc/numpy/',
+        'https://numpy.org/doc/stable/',
 	(None, '_intersphinx/numpy.inv')
     )
 }
@@ -218,5 +218,5 @@ def setup(app):
     """
     Add custom stylesheet(s).
     """
-    app.add_stylesheet('custom.css')
+    app.add_css_file('custom.css')
 

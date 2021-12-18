@@ -555,8 +555,10 @@ class Solver:
 
     def less_than(self, item1, item2, category, *bounds):
         """
-        .. py:function:: less_than(item1, item2, category[, exact])
-        .. py:function:: less_than(item1, item2, category[, lower, upper])
+        .. py:method:: less_than(item1, item2, category[, exact])
+           :noindex:
+        .. py:method:: less_than(item1, item2, category[, lower, upper])
+           :noindex:
 
         Assert that the item in `category` linked to `item1` is less
         than the one linked to `item2`.
@@ -657,8 +659,10 @@ class Solver:
 
     def greater_than(self, item1, item2, category, *bounds):
         """
-        .. py:function:: greater_than(item1, item2, category[, exact])
-        .. py:function:: greater_than(item1, item2, category[, lower, upper])
+        .. py:method:: greater_than(item1, item2, category[, exact])
+           :noindex:
+        .. py:method:: greater_than(item1, item2, category[, lower, upper])
+           :noindex:
 
         Assert that the item in `category` linked to `item1` is greater
         than the one linked to `item2`.
@@ -735,8 +739,10 @@ class Solver:
 
     def adjacent_to(self, item1, item2, category, *bounds):
         """
-        .. py:function:: adjacent_to(item1, item2, category[, exact=1])
-        .. py:function:: adjacent_to(item1, item2, category[, lower, upper])
+        .. py:method:: adjacent_to(item1, item2, category[, exact=1])
+           :noindex:
+        .. py:method:: adjacent_to(item1, item2, category[, lower, upper])
+           :noindex:
 
         Assert that the item in `category` linked to `item1` is within
         some bounds on either side of the one linked to `item2`.
