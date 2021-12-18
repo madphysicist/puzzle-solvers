@@ -113,7 +113,7 @@ Setup
 First we import a :py:class:`Solver` from the
 :py:mod:`puzzle_solvers.elimination` module::
 
-    from puzzles.elimination import Solver
+    from puzzle_solvers.elimination import Solver
 
 To use the :py:class:`Solver` class, we first provide the problem space as an
 input. In this case, we use a dictionary of lists. The keys of the dictionary
@@ -229,6 +229,7 @@ the solution with all of the resulting
     solver.match('Ingo', 'L')
     solver.match(positions[-1], 30)
     solver.match(ages[-1], sizes[0])
+    solver.less_than('Valerie', 'red', 'position', 1)
     solver.match('red', *sizes[sizes.index('S') + 1:])
 
 Here, we used the fact that our ``positions``, ``ages`` and ``sizes`` lists are
@@ -492,8 +493,8 @@ rules at both ends, since the contents of the categories changes.
 API
 ---
 
-The API contains classes for solving elimination puzzles. The main user
-interface is via the :py:class:`Solver` class.
+The API for elimination puzzles revolves around the user-facing
+:py:class:`Solver` class.
 
 .. autoclass:: Solver
    :members:
