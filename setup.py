@@ -40,7 +40,7 @@ from setuptools import setup
 DIST_NAME = 'puzzle-solvers'
 
 LICENSE = 'MIT'
-DESCRIPTION = 'Program for creating MS Word reports from data and content templates'
+DESCRIPTION = 'Package of tools for solving logic puzzles'
 
 AUTHOR = 'Joseph R. Fox-Rabinovitz'
 AUTHOR_EMAIL = 'jfoxrabinovitz@gmail.com'
@@ -56,11 +56,14 @@ CLASSIFIERS = [
     'Operating System :: Microsoft :: Windows',
     'Operating System :: POSIX :: Linux',
     'Operating System :: Unix',
+    'Operating System :: MacOS',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3 :: Only',
     'Programming Language :: Python :: 3.6',
     'Programming Language :: Python :: 3.7',
     'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
     'Topic :: Games/Entertainment :: Puzzle Games',
 ]
 
@@ -153,6 +156,6 @@ if __name__ == '__main__':
         },
         provides=['puzzle_solvers'],
         scripts=[],
-        data_files = [('', ['LICENSE', 'README'])],
+        data_files = [('', ['LICENSE', 'README', 'CHANGELOG'])],
         cmdclass=COMMANDS,
     )

@@ -639,8 +639,8 @@ class Solver:
             assertion = BoundedAssertion(self, item1, item2,
                                          category, *bounds)
         else:
-            raise TypeError(f'comparison accepts 0, 1 or 2 bounds '
-                            '({nargs} given)')
+            raise TypeError('comparison accepts 0, 1 or 2 bounds '
+                            f'({nargs} given)')
 
         count += assertion.verify()
         self._indent()
@@ -819,8 +819,8 @@ class Solver:
             assertion = BandedAssertion(self, item1, item2,
                                         category, *bounds)
         else:
-            raise TypeError(f'adjacency accepts 0, 1 or 2 bounds '
-                            '({nargs} given)')
+            raise TypeError('adjacency accepts 0, 1 or 2 bounds '
+                            f'({nargs} given)')
 
         count += assertion.verify()
         self._indent()

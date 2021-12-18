@@ -75,7 +75,7 @@ Rules
 
 1. The top Dana wants to buy is size XL.
 
-    a. She is ahead of (but not directly ahead) of someone who wants to buy a
+    a. She is ahead (but not directly ahead) of someone who wants to buy a
        black top.
 
 2. Jessica waits directly in front of a person who wants to buy a Poloshirt.
@@ -198,9 +198,10 @@ label) tuple. The line above could be rewritten as::
 
     solver.match(('name', 'Dana'), ('size', 'XL'))
 
-Note that all categories and labels must be an exact match with ``==``. In
-particular, strings are case sensitive. The first rule was
-:ref:`elimination-logic-explicit`. The next two rules are
+Note that all categories and labels must be an exact match with ``==``. As a
+consequence, strings are case sensitive.
+
+The first rule was :ref:`elimination-logic-explicit`. The next two rules are
 :ref:`elimination-logic-implicit`::
 
     solver.less_than('Dana', 'black', 'position', 2, None)
@@ -490,6 +491,9 @@ rules at both ends, since the contents of the categories changes.
 ---
 API
 ---
+
+The API contains classes for solving elimination puzzles. The main user
+interface is via the :py:class:`Solver` class.
 
 .. autoclass:: Solver
    :members:
