@@ -47,12 +47,12 @@ Tutorial
 --------
 
 As an example, we will show how to work through the problem in the
-[Stack Overflow question][1] that inspired this package in the first place. The
+`Stack Overflow question`_ that inspired this package in the first place. The
 full code can be found among the :ref:`setup-demos` at
 `puzzle_solvers.demos.elimination`.
 
-The original problem statement is in German and can be found [here][2] (along
-with the [solution][3]). The following is as literal of a translation into
+The original problem statement is in German and can be found `here`_ (along
+with the `solution`_). The following is as literal of a translation into
 proper English (US) as I could manage:
 
 
@@ -530,9 +530,9 @@ interface is via the :py:class:`Solver` class.
    :members:
 
 
-.. [1]: https://stackoverflow.com/q/56284249/2988730
-.. [2]: https://i.imgur.com/1Bsi3Fu.jpg
-.. [3]: https://i.imgur.com/vIKnhj0.jpg
+.. _Stack Overflow question: https://stackoverflow.com/q/56284249/2988730
+.. _here: https://i.imgur.com/1Bsi3Fu.jpg
+.. _solution: https://i.imgur.com/vIKnhj0.jpg
 
 
 .. include:: /link-defs.rst
