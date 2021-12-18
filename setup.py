@@ -131,7 +131,7 @@ if __name__ == '__main__':
         version=version_info(),
         license=LICENSE,
         description=DESCRIPTION,
-        long_description_content_type='text/markdown',
+        long_description_content_type='text/x-rst',
         long_description=long_description(),
         author=AUTHOR,
         author_email=AUTHOR_EMAIL,
